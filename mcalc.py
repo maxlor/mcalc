@@ -49,36 +49,57 @@ class MCalc:
 
     def calc(self, line):
         try:
-            results = self._parser.parse(self._lexer.lex(line))
-
-            for result in results:
-                if isinstance(result, Node):
+            answers = self._parser.parse(self._lexer.lex(line))
+            results = []
+            for answer in answers:
+                if isinstance(answer, Node):
                     try:
-                        value = result.eval()
-                        self.variables['last'] = value
-                        if os.isatty(0):
-                            printIndented('%20s' % self.mpfToStr(value))
-                        else:
-                            print(self.mpfToStr(value))
+                        results.append((True, self.mpfToStr(answer.eval())))
                     except ValueError as e:
-                        sys.stderr.write('Error: ' + str(e) + '\n')
+                        results.append((False, 'Error: ' + str(e)))
+                elif isinstance(answer, RuntimeWarning):
+                    results.append((False, 'Warning: ' + str(answer)))
                 else:
-                    printIndented(result)
+                    results.append((True, answer))
+            return results
 
         except rply.errors.LexingError as e:  # TODO restructure exception handling
-            sys.stdout.write(MCalc._errorMessage('unexpected character', line, e))
+            return [(False, MCalc._errorMessage('unexpected character', line, e))]
         except rply.errors.ParsingError as e:
-            sys.stderr.write(MCalc._errorMessage('parser error', line, e))
+            return [(False, MCalc._errorMessage('parser error', line, e))]
         except ValueError as e:
-            sys.stderr.write('Error: ' + str(e) + '\n')
+            return [(False, 'Error: ' + str(e) + '\n')]
 
     def run(self):
         while True:
             try:
                 line = input('> ' if os.isatty(0) else '') + '\n'
-                self.calc(line)
+                results = self.calc(line)
+
+                for (isResult, result) in results:
+                    if isResult:
+                        if os.isatty(0):
+                            if '=' in result:
+                                printIndented(result)
+                            elif ':' in result:
+                                printIndented(result)
+                            elif '.' in result:
+                                pos = result.find('.')
+                                printIndented("%20s%s" % (result[:pos], result[pos:]))
+                            else:
+                                printIndented("%20s" % result)
+                        else:
+                            print(result)
+                    else:
+                        sys.stderr.write(result)
+                        sys.stderr.write('\n')
+                        sys.stderr.flush()
             except EOFError:
                 break
+
+    def _functionNames(self):
+        return list(self.functions0.keys()) + list(self.functions1.keys()) \
+               + list(self.functions2.keys())
 
     def mpfToStr(self, value : mp.mpf):
         result = mp.nstr(value, int(self.settings['digits']))
@@ -130,6 +151,7 @@ class MCalc:
         lg.ignore(r'[ \t]+')
         lg.add('HELP', r'help')
         lg.add('COMMAND', r"\.[_a-zA-Z][_a-zA-Z0-9']*")
+        lg.add('FUNCTION', r"(%s)\(" % '|'.join(self._functionNames()))
         lg.add('NUMBER', r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
         lg.add('PLUS', r'\+')
         lg.add('MINUS', r'\-')
@@ -149,7 +171,7 @@ class MCalc:
         return lg.build()
 
     def _createParser(self):
-        tokens = ('HELP', 'COMMAND', 'NUMBER', 'PLUS', 'MINUS',
+        tokens = ('HELP', 'COMMAND', 'FUNCTION', 'NUMBER', 'PLUS', 'MINUS',
                   'MULTIPLY', 'DIVIDE', 'MODULO', 'POWER', 'FACTORIAL',
                   'SEMICOLON', 'ENTER', 'LPAREN', 'RPAREN', 'NAME',
                   'ASSIGN', 'COMMA', 'COLON')
@@ -158,10 +180,9 @@ class MCalc:
             ('right', ('ASSIGN',)),
             ('left', ('PLUS', 'MINUS')),
             ('left', ('MULTIPLY', 'DIVIDE', 'MODULO', 'NUMBER')),
-            ('right', ('UPLUS', 'UMINUS')),
             ('left', ('POWER',)),
             ('nonassoc', ('FACTORIAL',)),
-            ('nonassoc', ('FUNCTION',)),
+            ('nonassoc', ('FUNCTION', 'LPAREN', 'RPAREN')),
         )
         pg = rply.ParserGenerator(tokens, precedence)
 
@@ -187,9 +208,22 @@ class MCalc:
         def statement_novalue(p):
             return p[0]
 
-        @pg.production('statement : expr')
+        @pg.production('statement : signedExpr')
         def statement_expr(p):
             return p[0],
+
+        @pg.production('signedExpr : expr')
+        def signedExpr_expr(p):
+            return p[0]
+
+        @pg.production('signedExpr : sign expr')
+        def signedExpr_sign_expr(p):
+            def createUnop(e, s):
+                if s == '-':
+                    return UnOp(self, 4, e, lambda x: -x, '-')
+                else:
+                    return UnOp(self, 4, e, lambda x: x, '+')
+            return functools.reduce(createUnop, p[0][::-1], p[1])
 
         @pg.production('command : HELP')
         @pg.production('command : HELP NAME')
@@ -242,7 +276,8 @@ class MCalc:
 
         @pg.production('setting : COLON')
         def setting_getall(_):
-            return map(lambda s: '%s: %s' % (s, self.settings[s]), self.settings.keys())
+            formatString = "%%%ds: %%s" % max([len(s) for s in self.settings.keys()])
+            return [formatString % (s, self.settings[s]) for s in self.settings.keys()]
 
         @pg.production('setting : NAME COLON')
         def setting_get(p):
@@ -264,9 +299,12 @@ class MCalc:
             else:
                 raise ValueError('ambiguous setting prefix: %s' % p[0].value)
 
-        @pg.production('assignment : NAME ASSIGN expr')
+        @pg.production('assignment : NAME ASSIGN signedExpr')
         def assignment(p):
-            self.variables[p[0].value] = p[2].eval()
+            name = p[0].value
+            self.variables[name] = p[2].eval()
+            if name in self._functionNames():
+                return RuntimeWarning('there is a function of the same name "%s"' % (name,)),
             return tuple()
 
         @pg.production('expr : NUMBER')
@@ -277,48 +315,73 @@ class MCalc:
         def expr_name(p):
             return Name(self, p[0].value)
 
-        @pg.production('expr : PLUS expr', precedence='UPLUS')
-        def expr_uplus(p):
-            return UnOp(self, 4, p[1], lambda x: +x, '+')
+        @pg.production('sign : PLUS')
+        @pg.production('sign : MINUS')
+        def sign(p):
+            return p[0].value
 
-        @pg.production('expr : MINUS expr', precedence='UMINUS')
-        def expr_uminus(p):
-            return UnOp(self, 4, p[1], lambda x: -x, '-')
+        @pg.production('sign : sign PLUS')
+        @pg.production('sign : sign MINUS')
+        def signsign(p):
+            return p[0] + p[1].value
 
         @pg.production('expr : expr PLUS expr')
         def expr_addition(p):
             return BinOp(self, 2, p[0], p[2], mp.fadd, '+')
 
+        @pg.production('expr : expr PLUS sign expr')
+        def expr_addition_sign(p):
+            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fadd, '+')
+
         @pg.production('expr : expr MINUS expr')
         def expr_subtraction(p):
             return BinOp(self, 2, p[0], p[2], mp.fsub, '-')
+
+        @pg.production('expr : expr MINUS sign expr')
+        def expr_subtraction_sign(p):
+            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fsub, '-')
 
         @pg.production('expr : expr MULTIPLY expr')
         def expr_multiplication(p):
             return BinOp(self, 3, p[0], p[2], mp.fmul, '*')
 
-        @pg.production('expr : NUMBER expr')
-        def expr_implicit_multiplication_number_expr(p):
-            number = expr_number((p[0],))
-            return BinOp(self, 3, number, p[1], mp.fmul, '*')
+        @pg.production('expr : expr MULTIPLY sign expr')
+        def expr_multiplication_sign(p):
+            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fmul, '*')
+
+        @pg.production('expr : expr expr', precedence='MULTIPLY')
+        def expr_implicit_multiplication(p):
+            return BinOp(self, 3, p[0], p[1], mp.fmul, '*')
 
         @pg.production('expr : expr DIVIDE expr')
         def expr_division(p):
             return BinOp(self, 3, p[0], p[2], mp.fdiv, '/')
 
+        @pg.production('expr : expr DIVIDE sign expr')
+        def expr_division_sign(p):
+            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fdiv, '/')
+
         @pg.production('expr : expr MODULO expr')
         def expr_modulo(p):
             return BinOp(self, 3, p[0], p[2], mp.fmod, '%')
+
+        @pg.production('expr : expr MODULO sign expr')
+        def expr_modulo_sign(p):
+            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fmod, '%')
 
         @pg.production('expr : expr POWER expr')
         def expr_power(p):
             return BinOp(self, 5, p[0], p[2], mp.power, '^', space=False)
 
+        @pg.production('expr : expr POWER sign expr')
+        def expr_power_sign(p):
+            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.power, '^', space=False)
+
         @pg.production('expr : expr FACTORIAL')
         def factexpr_factorial(p):
             return UnOp(self, 6, p[0], mp.factorial, '!', 'postfix')
 
-        @pg.production('expr : LPAREN expr RPAREN')
+        @pg.production('expr : LPAREN signedExpr RPAREN')
         def parenexpr_parens(p):
             return p[1]
 
@@ -326,27 +389,27 @@ class MCalc:
         def expr_function(p):
             return p[0]
 
-        @pg.production('function : NAME LPAREN RPAREN')
+        @pg.production('function : FUNCTION RPAREN')
         def function0(p):
-            name = p[0].value
+            name = p[0].value[:-1]  # FUNCTION token includes LPAREN, cut it off
             if name in self.functions0:
                 return NoArgsFun(self, self.functions0[name], name)
             else:
                 raise ValueError('unknown function: %s' % name)
 
-        @pg.production('function : NAME LPAREN expr RPAREN')
+        @pg.production('function : FUNCTION signedExpr RPAREN')
         def function1(p):
-            name = p[0].value
+            name = p[0].value[:-1]  # FUNCTION token includes LPAREN, cut it off
             if name in self.functions1:
-                return UnOp(self, 99, p[2], self.functions1[name], name, 'function')
+                return UnOp(self, 99, p[1], self.functions1[name], name, 'function')
             else:
                 raise ValueError('unknown function: %s' % name)
 
-        @pg.production('function : NAME LPAREN expr COMMA expr RPAREN')
+        @pg.production('function : FUNCTION signedExpr COMMA signedExpr RPAREN')
         def function2(p):
-            name = p[0].value
+            name = p[0].value[:-1]  # FUNCTION token includes LPAREN, cut it off
             if name in self.functions2:
-                return BinOp(self, 99, p[2], p[4], self.functions2[name], name, 'function')
+                return BinOp(self, 99, p[1], p[3], self.functions2[name], name, 'function')
             else:
                 raise ValueError('unknown function: %s' % name)
 
@@ -355,7 +418,12 @@ class MCalc:
         def endOfStatement(_):
             pass
 
-        return pg.build()
+        p = pg.build()
+        for c in p.lr_table.sr_conflicts:
+            print(c)
+        for c in p.lr_table.rr_conflicts:
+            print(c)
+        return p
 
 
 class Settings:
@@ -497,6 +565,8 @@ class NoArgsFun(Node):
 
 class UnOp(Node):
     def __init__(self, mcalc, precedence, x, fun, displayStr, displayType='prefix', space=False):
+        if isinstance(x, str):
+            raise RuntimeError()
         super().__init__(mcalc, precedence, x)
         self._fun = fun
         self._displayStr = displayStr
@@ -533,6 +603,60 @@ class BinOp(Node):
             return self.reprChild(0) + self._space + self._displayStr + self._space + self.reprChild(1)
         elif self._displayType == 'function':
             return '%s(%s, %s)' % (self._displayStr, repr(self._children[0]), repr(self._children[1]))
+
+
+def runTests():
+    mcalc = MCalc()
+    ok = True
+    # Test operator precedence
+    ok &= _testExpr('1+2*3+4', '11', mcalc)
+    ok &= _testExpr('(1+2)*(3+4)', '21', mcalc)
+    ok &= _testExpr('4-1', '3', mcalc)
+    ok &= _testExpr('2*3^4*5', '810', mcalc)
+    ok &= _testExpr('2+3^4+5', '88', mcalc)
+    ok &= _testExpr('-2^2', '-4', mcalc)
+    ok &= _testExpr('-3!^3!', '-46656', mcalc)
+    ok &= _testExpr('5+-1', '4', mcalc)
+    ok &= _testExpr('5+-+-1', '6', mcalc)
+
+    # Test settings
+    mcalc.calc('precision:7')  # expect 5 displayed digits
+    ok &= _testExpr('pi', '3.1416', mcalc)
+    mcalc.calc('digits:10')
+    ok &= _testExpr('pi', '3.141592654', mcalc)
+    mcalc.calc('angle:deg')
+    ok &= _testExpr('sin(30)', '0.5', mcalc)
+    mcalc.calc('angle:rad')
+    ok &= _testExpr('sin(pi/6)', '0.5', mcalc)
+
+    # Test implicit multiplication
+    ok &= _testExpr('-2 3', '-6', mcalc)
+    ok &= _testExpr('4(-1)', '-4', mcalc)
+    ok &= _testExpr('sqrt=2; 2 sqrt', '4', mcalc)
+    ok &= _testExpr('2 sqrt(4)', '4', mcalc)
+    ok &= _testExpr('A=7;B=11;C=13; 2A B C', '2002', mcalc)
+    ok &= _testExpr('2 5! 3', '720', mcalc)
+    ok &= _testExpr('(1+2)(3+4)', '21', mcalc)
+
+    if ok:
+        print('All tests passed')
+
+
+def _testExpr(expr, expectedResult, mcalc=None):
+    if mcalc is None:
+        mcalc = MCalc()
+    results = [x for x in mcalc.calc(expr) if not x[1].startswith('Warning:')]
+    if len(results) != 1:
+        print('Test failure on "%s": expected one result, but got %d' % (expr, len(results)))
+        return False
+    isResult, result = results[0]
+    if not isResult:
+        print('Test failure on "%s": expected a result, but got %s' % (expr, result))
+        return False
+    if result != expectedResult:
+        print('Test failure on "%s": expected %s but got %s' % (expr, expectedResult, result))
+        return False
+    return True
 
 
 helpTexts = dict(
@@ -647,7 +771,10 @@ faster with gmpy or gmpy2 available.
 
 if __name__ == '__main__':
     try:
-        calculator = MCalc()
-        calculator.run()
+        if '-t' in sys.argv:
+            runTests()
+        else:
+            calculator = MCalc()
+            calculator.run()
     except KeyboardInterrupt:
         sys.exit(-1)
