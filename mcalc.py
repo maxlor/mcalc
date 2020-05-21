@@ -43,7 +43,7 @@ class MCalc:
                                )
         self.functions2 = dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         self.settings = Settings()
-
+        self._lineCounter = -1
         self._lexer = self._createLexer()
         self._parser = self._createParser()
 
@@ -54,7 +54,9 @@ class MCalc:
             for answer in answers:
                 if isinstance(answer, Node):
                     try:
-                        results.append((True, self.mpfToStr(answer.eval())))
+                        value = answer.eval()
+                        self.variables['last'] = value
+                        results.append((True, self.mpfToStr(value)))
                     except ValueError as e:
                         results.append((False, 'Error: ' + str(e)))
                 elif isinstance(answer, RuntimeWarning):
@@ -64,9 +66,9 @@ class MCalc:
             return results
 
         except rply.errors.LexingError as e:  # TODO restructure exception handling
-            return [(False, MCalc._errorMessage('unexpected character', line, e))]
+            return [(False, self._errorMessage('unexpected character', line, e))]
         except rply.errors.ParsingError as e:
-            return [(False, MCalc._errorMessage('parser error', line, e))]
+            return [(False, self._errorMessage('parser error', line, e))]
         except ValueError as e:
             return [(False, 'Error: ' + str(e) + '\n')]
 
@@ -74,6 +76,7 @@ class MCalc:
         while True:
             try:
                 line = input('> ' if os.isatty(0) else '') + '\n'
+                self._lineCounter += 1
                 results = self.calc(line)
 
                 for (isResult, result) in results:
@@ -85,9 +88,9 @@ class MCalc:
                                 printIndented(result)
                             elif '.' in result:
                                 pos = result.find('.')
-                                printIndented("%20s%s" % (result[:pos], result[pos:]))
+                                printIndented('%20s%s' % (result[:pos], result[pos:]))
                             else:
-                                printIndented("%20s" % result)
+                                printIndented('%20s' % result)
                         else:
                             print(result)
                     else:
@@ -113,12 +116,11 @@ class MCalc:
     def _fromAngle(self, x):
         return mp.degrees(x) if self.settings['angle'] == 'deg' else x
 
-    @staticmethod
-    def _errorMessage(message, line, e):
+    def _errorMessage(self, message, line, e):
         try:
             line, row, col = MCalc._lineRowColFromIndex(line, e.source_pos.idx)
             errorMessage = ''
-            errorMessage += 'Error: %s at %d:%d\n' % (message, row, col)
+            errorMessage += 'Error: %s at %d:%d\n' % (message, self._lineCounter + row, col)
             errorMessage += '  "%s"\n' % line
             errorMessage += '  %s^\n' % ('—' * col)
         except AttributeError:
@@ -130,7 +132,6 @@ class MCalc:
         line = ''
         row = 1
         col = 1
-        print(s)
         for i in range(len(s)):
             if i < index:
                 if s[i] == '\n':
@@ -151,7 +152,7 @@ class MCalc:
         lg.ignore(r'[ \t]+')
         lg.add('HELP', r'help')
         lg.add('COMMAND', r"\.[_a-zA-Z][_a-zA-Z0-9']*")
-        lg.add('FUNCTION', r"(%s)\(" % '|'.join(self._functionNames()))
+        lg.add('FUNCTION', r"(%s)[ \t]*\(" % '|'.join(self._functionNames()))
         lg.add('NUMBER', r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
         lg.add('PLUS', r'\+')
         lg.add('MINUS', r'\-')
@@ -164,7 +165,7 @@ class MCalc:
         lg.add('ENTER', r'[\n\r]')
         lg.add('LPAREN', r'\(')
         lg.add('RPAREN', r'\)')
-        lg.add('NAME', r"[_a-zA-Z'][_a-zA-Z0-9']*")
+        lg.add('NAME', r"[\w']+")
         lg.add('ASSIGN', r'=')
         lg.add('COMMA', r',')
         lg.add('COLON', r':')
@@ -391,7 +392,7 @@ class MCalc:
 
         @pg.production('function : FUNCTION RPAREN')
         def function0(p):
-            name = p[0].value[:-1]  # FUNCTION token includes LPAREN, cut it off
+            name = p[0].value[:-1].strip()  # FUNCTION token includes LPAREN, cut it off
             if name in self.functions0:
                 return NoArgsFun(self, self.functions0[name], name)
             else:
@@ -399,7 +400,7 @@ class MCalc:
 
         @pg.production('function : FUNCTION signedExpr RPAREN')
         def function1(p):
-            name = p[0].value[:-1]  # FUNCTION token includes LPAREN, cut it off
+            name = p[0].value[:-1].strip()  # FUNCTION token includes LPAREN, cut it off
             if name in self.functions1:
                 return UnOp(self, 99, p[1], self.functions1[name], name, 'function')
             else:
@@ -407,7 +408,7 @@ class MCalc:
 
         @pg.production('function : FUNCTION signedExpr COMMA signedExpr RPAREN')
         def function2(p):
-            name = p[0].value[:-1]  # FUNCTION token includes LPAREN, cut it off
+            name = p[0].value[:-1].strip()  # FUNCTION token includes LPAREN, cut it off
             if name in self.functions2:
                 return BinOp(self, 99, p[1], p[3], self.functions2[name], name, 'function')
             else:
