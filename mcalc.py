@@ -385,6 +385,10 @@ class MCalc:
 
         @pg.production('expr : expr expr', precedence='MULTIPLY')
         def expr_implicit_multiplication(p):
+            if isinstance(p[0], Name) and p[0].name not in self.variables \
+                    and p[0].name in self.functions1:
+                return UnOp(self, 99, p[1], self.functions1[p[0].name], p[0].name, 'function')
+                
             return BinOp(self, 3, p[0], p[1], mp.fmul, '*')
 
         @pg.production('expr : expr DIVIDE expr')
@@ -559,17 +563,17 @@ class Node():
 class Name(Node):
     def __init__(self, mcalc, name):
         super().__init__(mcalc, 99)
-        self._name = name
+        self.name = name
 
     def eval(self):
-        if self._name in self._mcalc.variables:
-            return self._mcalc.variables[self._name]
-        if self._name in self._mcalc.constants:
-            return self._mcalc.constants[self._name]
-        raise ValueError('unknown constant or variable: ' + self._name)
+        if self.name in self._mcalc.variables:
+            return self._mcalc.variables[self.name]
+        if self.name in self._mcalc.constants:
+            return self._mcalc.constants[self.name]
+        raise ValueError('unknown constant or variable: ' + self.name)
 
     def __repr__(self):
-        return self._name
+        return self.name
 
 
 class Number(Node):
