@@ -652,6 +652,9 @@ def runTests():
     ok &= _testExpr('-3!^3!', '-46656', mcalc)
     ok &= _testExpr('5+-1', '4', mcalc)
     ok &= _testExpr('5+-+-1', '6', mcalc)
+    ok &= _testExpr('2^3^2', '512', mcalc)
+    ok &= _testExpr('1+2sqrt(4)', '5', mcalc)
+    ok &= _testExpr('2^4sqrt(4)', '32', mcalc)
 
     # Test settings
     mcalc.calc('precision:7')  # expect 5 displayed digits
