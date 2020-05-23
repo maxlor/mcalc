@@ -23,9 +23,21 @@ def findByPrefix(prefix, strings):
     return [s for s in strings if s.startswith(prefix)]
 
 
+def degrees(x):
+    if isinstance(x, mp.mpc):
+        return mp.degrees(mp.re(x)) + mp.im(x) * mp.j
+    return mp.degrees(x)
+
+
+def radians(x):
+    if isinstance(x, mp.mpc):
+        return mp.radians(mp.re(x)) + mp.im(x) * mp.j
+    return mp.radians(x)
+
+
 class MCalc:
     def __init__(self):
-        self.constants = dict(pi=mp.pi, tau=mp.pi * 2, e=mp.e, _c=299792458)
+        self.constants = dict(pi=mp.pi, tau=mp.pi * 2, e=mp.e, i=mp.j, _c=299792458)
         self.variables = dict(last=0)
         self.functions0 = dict(rand=mp.rand)
         self.functions1 = dict(abs=mp.fabs, sqrt=mp.sqrt, cbrt=mp.cbrt, log=mp.log10, ln=mp.ln,
@@ -39,7 +51,7 @@ class MCalc:
                                sinc=compose(mp.sinc, self._toAngle),
                                ceil=mp.ceil, floor=mp.floor, round=mp.nint,
                                frac=mp.frac, sign=mp.sign, re=mp.re, im=mp.im,
-                               deg=mp.degrees, rad=mp.radians,
+                               deg=degrees, rad=radians,
                                )
         self.functions2 = dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         self.settings = Settings()
@@ -104,17 +116,39 @@ class MCalc:
         return list(self.functions0.keys()) + list(self.functions1.keys()) \
                + list(self.functions2.keys())
 
-    def mpfToStr(self, value : mp.mpf):
-        result = mp.nstr(value, int(self.settings['digits']))
-        if result.endswith('.0'):
-            return result[0:-2]
-        return result
+    def mpfToStr(self, value):
+        def toStr(realValue):
+            result = mp.nstr(realValue, int(self.settings['digits']))
+            return result[0:-2] if result.endswith('.0') else result
+
+        if isinstance(value, mp.mpc):
+            real = toStr(mp.re(value))
+            imag = toStr(mp.im(value))
+
+            op = '+'
+
+            if imag.startswith("-"):
+                imag = imag[1:]
+                op = '-'
+            if imag == '1':
+                imag = ''
+
+            if real == '0':
+                if op == '-':
+                    return '-%si' % imag
+                else:
+                    return '%si' % imag
+            if imag == '0':
+                return real
+            return '%s %s %si' % (real, op, imag)
+        else:
+            return toStr(value)
 
     def _toAngle(self, x):
-        return mp.radians(x) if self.settings['angle'] == 'deg' else x
+        return radians(x) if self.settings['angle'] == 'deg' else x
 
     def _fromAngle(self, x):
-        return mp.degrees(x) if self.settings['angle'] == 'deg' else x
+        return degrees(x) if self.settings['angle'] == 'deg' else x
 
     def _errorMessage(self, message, line, e):
         try:
@@ -180,10 +214,9 @@ class MCalc:
             ('left', ('SEMICOLON', 'ENTER')),
             ('right', ('ASSIGN',)),
             ('left', ('PLUS', 'MINUS')),
-            ('left', ('MULTIPLY', 'DIVIDE', 'MODULO', 'NUMBER')),
-            ('left', ('POWER',)),
+            ('left', ('MULTIPLY', 'DIVIDE', 'MODULO', 'NUMBER', 'NAME', 'FUNCTION', 'LPAREN')),
+            ('right', ('POWER',)),
             ('nonassoc', ('FACTORIAL',)),
-            ('nonassoc', ('FUNCTION', 'LPAREN', 'RPAREN')),
         )
         pg = rply.ParserGenerator(tokens, precedence)
 
@@ -699,6 +732,8 @@ expressions like you would a variable.
     _c                  Speed of light in m/s, 299792458.
 
     e                   Euler's constant, ~2.718.
+    
+    i                   Imaginary unit, with i^2 = -1.
     
     pi                  Pi is the ratio of a circle's circumference to its
                         diameter. ~3.142
