@@ -289,7 +289,7 @@ class MCalc:
                 else:
                     return 'Error: .del requires an argument. Type "help .del" for more information',
 
-            if command == '.quit':
+            if command == '.exit' or command == '.quit':
                 raise EOFError
 
             if command == '.reset':
@@ -724,7 +724,7 @@ The following commands are available:
     
     .clear              Deletes all variables.
     
-    .quit               Quits mcalc. The shortcut Ctrl-D also works.
+    .exit | .quit       Exits mcalc. The shortcut Ctrl-D also works.
     
     .reset              Deletes all variables and restores the default
                         settings.
