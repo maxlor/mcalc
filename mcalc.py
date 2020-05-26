@@ -55,11 +55,16 @@ class MCalc:
                                )
         self.functions2 = dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         self.settings = Settings()
+        self.substitutions = {'¹': '^1', '²': '^2', '³': '^3', '¼': '(1/4)', '½': '(1/2)',
+                              '¾': '(3/4)', '÷': '/'}
         self._lineCounter = -1
         self._lexer = self._createLexer()
         self._parser = self._createParser()
 
     def calc(self, line):
+        for key, value in self.substitutions.items():
+            line = line.replace(key, value)
+
         try:
             answers = self._parser.parse(self._lexer.lex(line))
             results = []
@@ -672,6 +677,11 @@ def runTests():
     ok &= _testExpr('2^3^2', '512', mcalc)
     ok &= _testExpr('1+2sqrt(4)', '5', mcalc)
     ok &= _testExpr('2^4sqrt(4)', '32', mcalc)
+    ok &= _testExpr('2¹', '2', mcalc)
+    ok &= _testExpr('2²', '4', mcalc)
+    ok &= _testExpr('2³', '8', mcalc)
+    ok &= _testExpr('2³²', '512', mcalc)
+
 
     # Test settings
     mcalc.calc('precision:7')  # expect 5 displayed digits
