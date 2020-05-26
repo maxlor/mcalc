@@ -385,9 +385,22 @@ class MCalc:
 
         @pg.production('expr : expr expr', precedence='MULTIPLY')
         def expr_implicit_multiplication(p):
+            # Enables no-parentheses syntax for function names, e.g. "sin 30"
             if isinstance(p[0], Name) and p[0].name not in self.variables \
                     and p[0].name in self.functions1:
                 return UnOp(self, 99, p[1], self.functions1[p[0].name], p[0].name, 'function')
+            
+            # Enables syntax for function names with exponents,
+            # e.g. "sin^2 30" or "sin^2(30)
+            if isinstance(p[0], BinOp) and p[0].fun == mp.power \
+                    and isinstance(p[0].children[0], Name) \
+                    and p[0].children[0].name not in self.variables \
+                    and p[0].children[0].name in self.functions1:
+
+                name = p[0].children[0].name
+                exponent = p[0].children[1]
+                funOp = UnOp(self, 99, p[1], self.functions1[name], name, 'function')
+                return BinOp(self, 5, funOp, exponent, mp.power, '^', space=False)
                 
             return BinOp(self, 3, p[0], p[1], mp.fmul, '*')
 
@@ -540,8 +553,8 @@ class Settings:
 class Node():
     def __init__(self, mcalc, precedence, *children):
         self._mcalc = mcalc
-        self._precedence = precedence
-        self._children = children
+        self.precedence = precedence
+        self.children = children
 
     def __repr__(self):
         raise NotImplementedError
@@ -550,10 +563,10 @@ class Node():
         raise NotImplementedError
 
     def precedence(self):
-        return self._precedence
+        return self.precedence
 
     def reprChild(self, i):
-        c = self._children[i]
+        c = self.children[i]
         if c.precedence() < self.precedence():
             return '(%s)' % repr(c)
         else:
@@ -612,7 +625,7 @@ class UnOp(Node):
         self._space = ' ' if space else ''
 
     def eval(self):
-        return self._fun(self._children[0].eval())
+        return self._fun(self.children[0].eval())
 
     def __repr__(self):
         if self._displayType == 'prefix':
@@ -628,19 +641,19 @@ class UnOp(Node):
 class BinOp(Node):
     def __init__(self, mcalc, precedence, x, y, fun, displayStr, displayType='infix', space=True):
         super().__init__(mcalc, precedence, x, y)
-        self._fun = fun
-        self._displayStr = displayStr
-        self._displayType = displayType
-        self._space = ' ' if space else ''
+        self.fun = fun
+        self.displayStr = displayStr
+        self.displayType = displayType
+        self.space = ' ' if space else ''
 
     def eval(self):
-        return self._fun(self._children[0].eval(), self._children[1].eval())
+        return self.fun(self.children[0].eval(), self.children[1].eval())
 
     def __repr__(self):
-        if self._displayType == 'infix':
-            return self.reprChild(0) + self._space + self._displayStr + self._space + self.reprChild(1)
-        elif self._displayType == 'function':
-            return '%s(%s, %s)' % (self._displayStr, repr(self._children[0]), repr(self._children[1]))
+        if self.displayType == 'infix':
+            return self.reprChild(0) + self.space + self.displayStr + self.space + self.reprChild(1)
+        elif self.displayType == 'function':
+            return '%s(%s, %s)' % (self.displayStr, repr(self.children[0]), repr(self.children[1]))
 
 
 def runTests():
