@@ -94,7 +94,11 @@ class MCalc:
             try:
                 line = input('> ' if os.isatty(0) else '') + '\n'
                 self._lineCounter += 1
-                results = self.calc(line)
+                try:
+                    results = self.calc(line)
+                except KeyboardInterrupt:
+                    printIndented("%20s" % "interrupted")
+                    continue
 
                 for (isResult, result) in results:
                     if isResult:
