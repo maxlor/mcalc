@@ -55,8 +55,11 @@ class MCalc:
                                )
         self.functions2 = dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         self.settings = Settings()
-        self.substitutions = {'¹': '^1', '²': '^2', '³': '^3', '¼': '(1/4)', '½': '(1/2)',
-                              '¾': '(3/4)', '÷': '/'}
+        self.substitutions = {'¹': '^(1)', '²': '^(2)', '³': '^(3)', '⁴': '^(4)', '⁵': '^(5)',
+                              '⁶': '^(6)', '⁷': '^(7)', '⁸': '^(8)', '⁹': '^(9)', 'ⁱ': '^(i)',
+                              '½': '(1/2)', '⅓': '(1/3)', '⅔': '(2/3)', '¼': '(1/4)',
+                              '¾': '(3/4)', '⅕': '(1/5)', '⅖': '(2/5)', '⅗': '(3/5)',
+                              '⅘': '(4/5)', '⅐': '(1/7)', '⅑': '(1/9)', '⅒': '(1/10)'}
         self._lineCounter = -1
         self._lexer = self._createLexer()
         self._parser = self._createParser()
@@ -198,9 +201,9 @@ class MCalc:
         lg.add('FUNCTION', r"(%s)[ \t]*\(" % '|'.join(self._functionNames()))
         lg.add('NUMBER', r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
         lg.add('PLUS', r'\+')
-        lg.add('MINUS', r'\-')
-        lg.add('MULTIPLY', r'\*')
-        lg.add('DIVIDE', r'/')
+        lg.add('MINUS', r'[-−]')
+        lg.add('MULTIPLY', r'[*⋅]')
+        lg.add('DIVIDE', r'[/÷]')
         lg.add('MODULO', r'%')
         lg.add('POWER', r'\^')
         lg.add('FACTORIAL', r'!')
