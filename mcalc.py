@@ -37,8 +37,10 @@ def radians(x):
 
 class MCalc:
     def __init__(self):
+        self.scopedVariableStack = []
         self.constants = dict(pi=mp.pi, tau=mp.pi * 2, e=mp.e, i=mp.j, _c=299792458)
         self.variables = dict(last=0)
+        self.userFunctions = dict()
         self.functions0 = dict(rand=mp.rand)
         self.functions1 = dict(abs=mp.fabs, sqrt=mp.sqrt, cbrt=mp.cbrt, log=mp.log10, ln=mp.ln,
                                log2=functools.partial(mp.log, b=2),
@@ -69,20 +71,21 @@ class MCalc:
             line = line.replace(key, value)
 
         try:
-            answers = self._parser.parse(self._lexer.lex(line))
+            parsedObjects = self._parser.parse(self._lexer.lex(line))
             results = []
-            for answer in answers:
-                if isinstance(answer, Node):
+            for parsedObj in parsedObjects:
+                if isinstance(parsedObj, AbstractExpr):
+                    parsedObj.fixup('functionCalls')
                     try:
-                        value = answer.eval()
+                        value = parsedObj.eval()
                         self.variables['last'] = value
                         results.append((True, self.mpfToStr(value)))
                     except ValueError as e:
                         results.append((False, 'Error: ' + str(e)))
-                elif isinstance(answer, RuntimeWarning):
-                    results.append((False, 'Warning: ' + str(answer)))
+                elif isinstance(parsedObj, RuntimeWarning):
+                    results.append((False, 'Warning: ' + str(parsedObj)))
                 else:
-                    results.append((True, answer))
+                    results.append((True, parsedObj))
             return results
 
         except rply.errors.LexingError as e:  # TODO restructure exception handling
@@ -126,7 +129,7 @@ class MCalc:
 
     def _functionNames(self):
         return list(self.functions0.keys()) + list(self.functions1.keys()) \
-               + list(self.functions2.keys())
+               + list(self.functions2.keys()) + list(self.userFunctions.keys())
 
     def mpfToStr(self, value):
         def toStr(realValue):
@@ -198,7 +201,7 @@ class MCalc:
         lg.ignore(r'[ \t]+')
         lg.add('HELP', r'help')
         lg.add('COMMAND', r"\.[_a-zA-Z][_a-zA-Z0-9']*")
-        lg.add('FUNCTION', r"(%s)[ \t]*\(" % '|'.join(self._functionNames()))
+        # lg.add('FUNCTION', r"(%s)[ \t]*\(" % '|'.join(self._functionNames()))
         lg.add('NUMBER', r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
         lg.add('PLUS', r'\+')
         lg.add('MINUS', r'[-−]')
@@ -218,7 +221,7 @@ class MCalc:
         return lg.build()
 
     def _createParser(self):
-        tokens = ('HELP', 'COMMAND', 'FUNCTION', 'NUMBER', 'PLUS', 'MINUS',
+        tokens = ('HELP', 'COMMAND', 'NUMBER', 'PLUS', 'MINUS',
                   'MULTIPLY', 'DIVIDE', 'MODULO', 'POWER', 'FACTORIAL',
                   'SEMICOLON', 'ENTER', 'LPAREN', 'RPAREN', 'NAME',
                   'ASSIGN', 'COMMA', 'COLON')
@@ -226,9 +229,10 @@ class MCalc:
             ('left', ('SEMICOLON', 'ENTER')),
             ('right', ('ASSIGN',)),
             ('left', ('PLUS', 'MINUS')),
-            ('left', ('MULTIPLY', 'DIVIDE', 'MODULO', 'NUMBER', 'NAME', 'FUNCTION', 'LPAREN')),
+            ('left', ('MULTIPLY', 'DIVIDE', 'MODULO', 'NUMBER', 'NAME', 'LPAREN')),
             ('right', ('POWER',)),
             ('nonassoc', ('FACTORIAL',)),
+            ('left', ('COMMA', 'RPAREN')),
         )
         pg = rply.ParserGenerator(tokens, precedence)
 
@@ -256,7 +260,41 @@ class MCalc:
 
         @pg.production('statement : signedExpr')
         def statement_expr(p):
-            return p[0],
+            return ExprRoot(self, p[0]),
+
+        # @pg.production('statement : functionDef')
+        # def statement_functionDef(p):
+        #     return p[0]
+        #
+        # @pg.production('functionDef : NAME LPAREN RPAREN ASSIGN signedExpr')
+        # def functionDef_without_arguments(p):
+        #     return defineFunction(p[0][:-1].strip(), tuple(), p[3])
+        #
+        # @pg.production('functionDef : FUNCTION argumentList RPAREN ASSIGN signedExpr')
+        # def functionDef_with_arguments(p):
+        #     return defineFunction(p[0][:-1].strip(), p[1], p[4])
+
+        def defineFunction(name, arguments, expression):
+            result = []
+            if name in self.functions0 or name in self.functions1 or name in self.functions2:
+                result.append(RuntimeWarning('there is a built-in function of the same name "%s"' % (name,)))
+            if name in self.variables:
+                result.append(RuntimeWarning('there is a variable of the same name "%s"' % (name,)))
+            argSet = set()
+            for arg in arguments:
+                if arg in argSet:
+                    raise RuntimeError('argument "%s" appears more than once in argument list' % (arg,))
+                argSet.add(arg)
+            self.userFunctions['name'] = (arguments, expression)
+            return tuple()
+
+        # @pg.production('argumentList : signedExpr ')
+        # def argumentList_signedExpr(p):
+        #     return p[0],
+        #
+        # @pg.production('argumentList : signedExpr COMMA argumentList')
+        # def argumentList_signedExpr_argumentList(p):
+        #     return (p[0],) + p[2]
 
         @pg.production('signedExpr : expr')
         def signedExpr_expr(p):
@@ -395,26 +433,13 @@ class MCalc:
         def expr_multiplication_sign(p):
             return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fmul, '*')
 
+        @pg.production('expr : NAME expr', precedence='MULTIPLY')
+        def expr_name_expr_implicit_multiplication(p):
+            return BinOp(self, 3, expr_name(p), p[1], mp.fmul, '*', implicit=True)
+
         @pg.production('expr : expr expr', precedence='MULTIPLY')
         def expr_implicit_multiplication(p):
-            # Enables no-parentheses syntax for function names, e.g. "sin 30"
-            if isinstance(p[0], Name) and p[0].name not in self.variables \
-                    and p[0].name in self.functions1:
-                return UnOp(self, 99, p[1], self.functions1[p[0].name], p[0].name, 'function')
-            
-            # Enables syntax for function names with exponents,
-            # e.g. "sin^2 30" or "sin^2(30)
-            if isinstance(p[0], BinOp) and p[0].fun == mp.power \
-                    and isinstance(p[0].children[0], Name) \
-                    and p[0].children[0].name not in self.variables \
-                    and p[0].children[0].name in self.functions1:
-
-                name = p[0].children[0].name
-                exponent = p[0].children[1]
-                funOp = UnOp(self, 99, p[1], self.functions1[name], name, 'function')
-                return BinOp(self, 5, funOp, exponent, mp.power, '^', space=False)
-                
-            return BinOp(self, 3, p[0], p[1], mp.fmul, '*')
+            return BinOp(self, 3, p[0], p[1], mp.fmul, '*', implicit=True)
 
         @pg.production('expr : expr DIVIDE expr')
         def expr_division(p):
@@ -452,29 +477,32 @@ class MCalc:
         def expr_function(p):
             return p[0]
 
-        @pg.production('function : FUNCTION RPAREN')
-        def function0(p):
-            name = p[0].value[:-1].strip()  # FUNCTION token includes LPAREN, cut it off
-            if name in self.functions0:
-                return NoArgsFun(self, self.functions0[name], name)
-            else:
-                raise ValueError('unknown function: %s' % name)
+        @pg.production('function : NAME LPAREN RPAREN')
+        def function(p):
+            return FunOp(self, p[0].value)
 
-        @pg.production('function : FUNCTION signedExpr RPAREN')
-        def function1(p):
-            name = p[0].value[:-1].strip()  # FUNCTION token includes LPAREN, cut it off
-            if name in self.functions1:
-                return UnOp(self, 99, p[1], self.functions1[name], name, 'function')
-            else:
-                raise ValueError('unknown function: %s' % name)
+        # Note: one-argument functions are parsed as multiplication and then
+        # later fixed in the AST.
 
-        @pg.production('function : FUNCTION signedExpr COMMA signedExpr RPAREN')
-        def function2(p):
-            name = p[0].value[:-1].strip()  # FUNCTION token includes LPAREN, cut it off
-            if name in self.functions2:
-                return BinOp(self, 99, p[1], p[3], self.functions2[name], name, 'function')
-            else:
-                raise ValueError('unknown function: %s' % name)
+        # @pg.production('function : NAME LPAREN argumentList RPAREN')
+        # def function_argumentList(p):
+        #     return FunOp(self, p[0].value, *p[2])
+
+        @pg.production('expr : LPAREN argumentList RPAREN')
+        def expr_argumentList(p):
+            return ArgListNode(self, *p[1])
+
+        @pg.production('argumentList : signedExpr argumentListContinuation')
+        def argumentList_signedExpr(p):
+            return (p[0],) + p[1]
+
+        @pg.production('argumentListContinuation : COMMA signedExpr')
+        def argumentListContinuation_signedExpr(p):
+            return p[1],
+
+        @pg.production('argumentListContinuation : COMMA signedExpr argumentListContinuation')
+        def argumentListContinuation_signedExpr_argumentListContinuation(p):
+            return (p[1],) + p[2]
 
         @pg.production('eos : ENTER')
         @pg.production('eos : SEMICOLON')
@@ -562,11 +590,14 @@ class Settings:
         return f
 
 
-class Node():
+class AbstractExpr():
     def __init__(self, mcalc, precedence, *children):
         self._mcalc = mcalc
         self.precedence = precedence
-        self.children = children
+        self.parent = None
+        self.children = list(children)
+        for child in self.children:
+            child.parent = self
 
     def __repr__(self):
         raise NotImplementedError
@@ -574,18 +605,48 @@ class Node():
     def eval(self):
         raise NotImplementedError
 
-    def precedence(self):
-        return self.precedence
+    def fixup(self, what=None):
+        def hasExprAncestor(node):
+            while not isinstance(node, ExprRoot):
+                node = node.parent
+                if node is None:
+                    return False
+            return True
+
+        for i in range(len(self.children)):
+            self.children[i].fixup(what)
+            if not hasExprAncestor(self):
+                return  # This node has been deleted in fixup
+
+    def replaceChild(self, oldChild, newChild):
+        for i, c in enumerate(self.children):
+            if c is oldChild:
+                oldChild.parent = None
+                newChild.parent = self
+                self.children[i] = newChild
+                return oldChild
+        raise ValueError('child not found')
 
     def reprChild(self, i):
         c = self.children[i]
-        if c.precedence() < self.precedence():
+        if c.precedence < self.precedence:
             return '(%s)' % repr(c)
         else:
             return repr(c)
 
 
-class Name(Node):
+class ExprRoot(AbstractExpr):
+    def __init__(self, mcalc, expr):
+        super().__init__(mcalc, 99, expr)
+
+    def __repr__(self):
+        return repr(self.children[0])
+
+    def eval(self):
+        return self.children[0].eval()
+
+
+class Name(AbstractExpr):
     def __init__(self, mcalc, name):
         super().__init__(mcalc, 99)
         self.name = name
@@ -600,8 +661,41 @@ class Name(Node):
     def __repr__(self):
         return self.name
 
+    def fixup(self, what):
+        if what == 'functionCalls':
+            pass
 
-class Number(Node):
+            isFunction = (self.name in self._mcalc.functions1 and
+                          self.name not in self._mcalc.variables)
+
+            if isFunction:
+                def isLeftSideOfImplicitMultiplication(node):
+                    return (node.parent is not None and isinstance(node.parent, BinOp) and
+                            node.parent.fun == mp.fmul and node.parent.implicit and
+                            node.parent.children[0] == node)
+
+                node = self
+
+                # Go up through the AST, until we arrive at a left child of an
+                # implicit multiplication
+                while not isLeftSideOfImplicitMultiplication(node):
+                    if node.parent is None:
+                        raise ValueError('Syntax error: cannot find argument for function "%s"' % self.name)
+                    node = node.parent
+
+                multiplication = node.parent
+                argument = multiplication.children[1]
+                if isinstance(argument, ArgListNode):
+                    funNode = FunOp(self._mcalc, self.name, *argument.children)
+                else:
+                    funNode = FunOp(self._mcalc, self.name, argument)
+                root = node.parent.parent
+                root.replaceChild(node.parent, node)
+                self.parent.replaceChild(self, funNode)
+                funNode.fixup(what)
+
+
+class Number(AbstractExpr):
     def __init__(self, mcalc, text):
         super().__init__(mcalc, 99)
         self._value = mp.mpf(text)
@@ -613,7 +707,7 @@ class Number(Node):
         return self._mcalc.mpfToStr(self._value)
 
 
-class NoArgsFun(Node):
+class NoArgsFun(AbstractExpr):
     def __init__(self, mcalc, fun, displayStr):
         super().__init__(mcalc, 99)
         self._fun = fun
@@ -626,7 +720,7 @@ class NoArgsFun(Node):
         return self._displayStr + '()'
 
 
-class UnOp(Node):
+class UnOp(AbstractExpr):
     def __init__(self, mcalc, precedence, x, fun, displayStr, displayType='prefix', space=False):
         if isinstance(x, str):
             raise RuntimeError()
@@ -650,22 +744,55 @@ class UnOp(Node):
             raise ValueError('invalid display type')
 
 
-class BinOp(Node):
-    def __init__(self, mcalc, precedence, x, y, fun, displayStr, displayType='infix', space=True):
+class BinOp(AbstractExpr):
+    def __init__(self, mcalc, precedence, x, y, fun, displayStr, displayType='infix', space=True,
+                 implicit=False):
         super().__init__(mcalc, precedence, x, y)
         self.fun = fun
         self.displayStr = displayStr
         self.displayType = displayType
-        self.space = ' ' if space else ''
+        self.space = space
+        self.implicit = implicit
 
     def eval(self):
         return self.fun(self.children[0].eval(), self.children[1].eval())
 
     def __repr__(self):
+        space = ' ' if self.space else ''
         if self.displayType == 'infix':
-            return self.reprChild(0) + self.space + self.displayStr + self.space + self.reprChild(1)
+            return '[' + self.reprChild(0) + space + self.displayStr + space + self.reprChild(1) + ']'
         elif self.displayType == 'function':
             return '%s(%s, %s)' % (self.displayStr, repr(self.children[0]), repr(self.children[1]))
+
+
+class FunOp(AbstractExpr):
+    def __init__(self, mcalc, name, *arguments):
+        super().__init__(mcalc, 99, *arguments)
+        self.name = name
+
+    def eval(self):
+        if len(self.children) == 0 and self.name in self._mcalc.functions0:
+            return self._mcalc.functions0[self.name]()
+        elif len(self.children) == 1 and self.name in self._mcalc.functions1:
+            return self._mcalc.functions1[self.name](self.children[0].eval())
+        elif len(self.children) == 2 and self.name in self._mcalc.functions2:
+            return self._mcalc.functions2[self.name](self.children[0].eval(), self.children[1].eval())
+        else:
+            raise RuntimeError('unknown function: "%s"' % (self.name,))
+
+    def __repr__(self):
+        return '%s(%s)' % (self.name, ', '.join([repr(child) for child in self.children]))
+
+
+class ArgListNode(AbstractExpr):
+    def __init__(self, mcalc, *arguments):
+        super().__init__(mcalc, 99, *arguments)
+
+    def eval(self):
+        raise RuntimeError("syntax error: argument list without function")
+
+    def __repr__(self):
+        return '(%s)' % ', '.join([repr(child) for child in self.children])
 
 
 def runTests():
@@ -682,13 +809,20 @@ def runTests():
     ok &= _testExpr('5+-1', '4', mcalc)
     ok &= _testExpr('5+-+-1', '6', mcalc)
     ok &= _testExpr('2^3^2', '512', mcalc)
+    ok &= _testExpr('sqrt 4', '2', mcalc)
+    ok &= _testExpr('sqrt(4)', '2', mcalc)
+    ok &= _testExpr('log(256, 2)', '8', mcalc)
     ok &= _testExpr('1+2sqrt(4)', '5', mcalc)
     ok &= _testExpr('2^4sqrt(4)', '32', mcalc)
+    ok &= _testExpr('3^sqrt(4)', '9', mcalc)
+    ok &= _testExpr('sqrt(4)2', '4', mcalc)
+    ok &= _testExpr('2 * 3 * sqrt 4', '12', mcalc)
+    ok &= _testExpr('sqrt sqrt 16', '2', mcalc)
+    ok &= _testExpr('sqrt^2(1+1)', '2', mcalc)
     ok &= _testExpr('2¹', '2', mcalc)
     ok &= _testExpr('2²', '4', mcalc)
     ok &= _testExpr('2³', '8', mcalc)
     ok &= _testExpr('2³²', '512', mcalc)
-
 
     # Test settings
     mcalc.calc('precision:7')  # expect 5 displayed digits
@@ -703,11 +837,17 @@ def runTests():
     # Test implicit multiplication
     ok &= _testExpr('-2 3', '-6', mcalc)
     ok &= _testExpr('4(-1)', '-4', mcalc)
-    ok &= _testExpr('sqrt=2; 2 sqrt', '4', mcalc)
-    ok &= _testExpr('2 sqrt(4)', '4', mcalc)
+    ok &= _testExpr('sqrt=10; 2 sqrt', '20', mcalc)
+    ok &= _testExpr('sqrt 4', '40', mcalc)
+    ok &= _testExpr('sqrt (4)', '40', mcalc)
+    ok &= _testExpr('2 sqrt 4', '80', mcalc)
+    ok &= _testExpr('2 sqrt (4)', '80', mcalc)
     ok &= _testExpr('A=7;B=11;C=13; 2A B C', '2002', mcalc)
     ok &= _testExpr('2 5! 3', '720', mcalc)
     ok &= _testExpr('(1+2)(3+4)', '21', mcalc)
+
+    # Test user functions
+    ok &= _testExpr('f0()=1.2', mcalc)
 
     if ok:
         print('All tests passed')
