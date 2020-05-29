@@ -267,7 +267,7 @@ class MCalc:
             else:
                 return t
 
-        pg = rply.ParserGenerator(tokens, precedence)
+        pg = rply.ParserGenerator(tokens, precedence, cache_id='mcalc')
 
         @pg.production('statementList : eos')
         def statementList_empty(_):
@@ -477,19 +477,41 @@ class MCalc:
         def expr_subtraction_sign(p):
             return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fsub, '-')
 
-        @pg.production('expr : expr MULTIPLY expr')
-        @pg.production('expr : NAME MULTIPLY expr')
-        @pg.production('expr : expr MULTIPLY NAME')
-        @pg.production('expr : NAME MULTIPLY NAME')
-        def expr_multiplication(p):
-            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fmul, '*')
+        @pg.production('mulDivModOp : MULTIPLY')
+        @pg.production('mulDivModOp : DIVIDE')
+        @pg.production('mulDivModOp : MODULO')
+        def mulDivModOp(p):
+            return p[0]
 
-        @pg.production('expr : expr MULTIPLY sign expr')
-        @pg.production('expr : NAME MULTIPLY sign expr')
-        @pg.production('expr : expr MULTIPLY sign NAME')
-        @pg.production('expr : NAME MULTIPLY sign NAME')
-        def expr_multiplication_sign(p):
-            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fmul, '*')
+        @pg.production('expr : expr mulDivModOp expr', precedence='MULTIPLY')
+        @pg.production('expr : NAME mulDivModOp expr', precedence='MULTIPLY')
+        @pg.production('expr : expr mulDivModOp NAME', precedence='MULTIPLY')
+        @pg.production('expr : NAME mulDivModOp NAME', precedence='MULTIPLY')
+        def expr_mulDivModOp(p):
+            first = maybe_name(p[0])
+            second = maybe_name(p[2])
+
+            if p[1].name == 'MULTIPLY':
+                return BinOp(self, 3, first, second, mp.fmul, '*')
+            if p[1].name == 'DIVIDE':
+                return BinOp(self, 3, first, second, mp.fdiv, '/')
+            if p[1].name == 'MODULO':
+                return BinOp(self, 3, first, second, mp.fmod, '%')
+
+        @pg.production('expr : expr mulDivModOp sign expr', precedence='MULTIPLY')
+        @pg.production('expr : NAME mulDivModOp sign expr', precedence='MULTIPLY')
+        @pg.production('expr : expr mulDivModOp sign NAME', precedence='MULTIPLY')
+        @pg.production('expr : NAME mulDivModOp sign NAME', precedence='MULTIPLY')
+        def expr_mulDivModOp_sign(p):
+            first = maybe_name(p[0])
+            second = signedExpr_sign_expr((p[2], maybe_name(p[3])))
+
+            if p[1].name == 'MULTIPLY':
+                return BinOp(self, 3, first, second, mp.fmul, '*')
+            if p[1].name == 'DIVIDE':
+                return BinOp(self, 3, first, second, mp.fdiv, '/')
+            if p[1].name == 'MODULO':
+                return BinOp(self, 3, first, second, mp.fmod, '%')
 
         @pg.production('expr : expr expr', precedence='MULTIPLY')
         @pg.production('expr : NAME expr', precedence='MULTIPLY')
@@ -497,34 +519,6 @@ class MCalc:
         @pg.production('expr : NAME NAME', precedence='MULTIPLY')
         def expr_implicit_multiplication(p):
             return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[1]), mp.fmul, '*', implicit=True)
-
-        @pg.production('expr : expr DIVIDE expr')
-        @pg.production('expr : NAME DIVIDE expr')
-        @pg.production('expr : expr DIVIDE NAME')
-        @pg.production('expr : NAME DIVIDE NAME')
-        def expr_division(p):
-            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fdiv, '/')
-
-        @pg.production('expr : expr DIVIDE sign expr')
-        @pg.production('expr : NAME DIVIDE sign expr')
-        @pg.production('expr : expr DIVIDE sign NAME')
-        @pg.production('expr : NAME DIVIDE sign NAME')
-        def expr_division_sign(p):
-            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fdiv, '/')
-
-        @pg.production('expr : expr MODULO expr')
-        @pg.production('expr : NAME MODULO expr')
-        @pg.production('expr : expr MODULO NAME')
-        @pg.production('expr : NAME MODULO NAME')
-        def expr_modulo(p):
-            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fmod, '%')
-
-        @pg.production('expr : expr MODULO sign expr')
-        @pg.production('expr : NAME MODULO sign expr')
-        @pg.production('expr : expr MODULO sign NAME')
-        @pg.production('expr : NAME MODULO sign NAME')
-        def expr_modulo_sign(p):
-            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fmod, '%')
 
         @pg.production('expr : expr POWER expr')
         @pg.production('expr : NAME POWER expr')
