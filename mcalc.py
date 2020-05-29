@@ -400,9 +400,9 @@ class MCalc:
             name = p[0].name
             self.userFunctions[0][name] = (tuple(), maybe_name(p[2]))
             if name in self.variables:
-                return RuntimeWarning('there is a variable of the same name "%s"' % (name,))
+                return RuntimeWarning('there is a variable of the same name "%s"' % (name,)),
             if self.existsFunction(name, False, 0):
-                return RuntimeWarning('there is a built-in function of the same name "%s"' % (name,))
+                return RuntimeWarning('there is a built-in function of the same name "%s"' % (name,)),
             return tuple()
 
         @pg.production('assignment : expr ASSIGN signedExpr')
@@ -935,6 +935,7 @@ def runTests():
     ok &= _testExpr('f2(a, b)=sqrt(a^2+b^2); f2(3, 4)', '5', mcalc)
     ok &= _testExpr('f3(a, b, c)=a+b+c; f3(1, 2, 3)', '6', mcalc)
     ok &= _testExpr('id x = x; id 1', '1', mcalc)
+    ok &= _testExpr('rand() = 0.5; rand()', '0.5', mcalc)
 
     if ok:
         print('All tests passed')
