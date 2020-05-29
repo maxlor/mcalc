@@ -40,22 +40,21 @@ class MCalc:
         self.scopedVariableStack = []
         self.constants = dict(pi=mp.pi, tau=mp.pi * 2, e=mp.e, i=mp.j, _c=299792458)
         self.variables = dict(last=0)
+        self.functionParameters = [dict()]  # stack of dictionaries with guard
+        self.functions = {
+            0: dict(rand=mp.rand),
+            1: dict(abs=mp.fabs, sqrt=mp.sqrt, cbrt=mp.cbrt, log=mp.log10, ln=mp.ln,
+                    log2=functools.partial(mp.log, b=2), sin=compose(mp.sin, self._toAngle),
+                    cos=compose(mp.cos, self._toAngle), tan=compose(mp.tan, self._toAngle),
+                    asin=compose(self._fromAngle, mp.asin),
+                    acos=compose(self._fromAngle, mp.acos),
+                    atan=compose(self._fromAngle, mp.atan),
+                    sinc=compose(mp.sinc, self._toAngle),
+                    ceil=mp.ceil, floor=mp.floor, round=mp.nint, frac=mp.frac, sign=mp.sign,
+                    re=mp.re, im=mp.im, deg=degrees, rad=radians),
+            2: dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
+        }
         self.userFunctions = dict()
-        self.functions0 = dict(rand=mp.rand)
-        self.functions1 = dict(abs=mp.fabs, sqrt=mp.sqrt, cbrt=mp.cbrt, log=mp.log10, ln=mp.ln,
-                               log2=functools.partial(mp.log, b=2),
-                               sin=compose(mp.sin, self._toAngle),
-                               cos=compose(mp.cos, self._toAngle),
-                               tan=compose(mp.tan, self._toAngle),
-                               asin=compose(self._fromAngle, mp.asin),
-                               acos=compose(self._fromAngle, mp.acos),
-                               atan=compose(self._fromAngle, mp.atan),
-                               sinc=compose(mp.sinc, self._toAngle),
-                               ceil=mp.ceil, floor=mp.floor, round=mp.nint,
-                               frac=mp.frac, sign=mp.sign, re=mp.re, im=mp.im,
-                               deg=degrees, rad=radians,
-                               )
-        self.functions2 = dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         self.settings = Settings()
         self.substitutions = {'¹': '^(1)', '²': '^(2)', '³': '^(3)', '⁴': '^(4)', '⁵': '^(5)',
                               '⁶': '^(6)', '⁷': '^(7)', '⁸': '^(8)', '⁹': '^(9)', 'ⁱ': '^(i)',
@@ -127,9 +126,37 @@ class MCalc:
             except EOFError:
                 break
 
-    def _functionNames(self):
-        return list(self.functions0.keys()) + list(self.functions1.keys()) \
-               + list(self.functions2.keys()) + list(self.userFunctions.keys())
+    def existsFunction(self, name, checkUserFunctions=True, parameters=None):
+        """
+        Check whether the function called "name" exists.
+
+        If "checkUserFunctions" is True, user functions are checked for a match too.
+
+        If "parameters" is 0 or larger, the function must have exiactly that many
+        parameters to match, otherwise any number of parameters will do. If it is
+        negative, it the function must have abs(parameters) or more to match. If
+        "parameters" is None, any number of parameters will do.
+        """
+        def lookIn(paramsFuncDict):
+            if parameters is None:
+                for funcDict in paramsFuncDict.values():
+                    if name in funcDict:
+                        return True
+            elif parameters < 0:
+                for noParams, funDict in paramsFuncDict.items():
+                    if noParams < -parameters:
+                        continue
+                    if name in funDict:
+                        return True
+            elif parameters in paramsFuncDict and name in paramsFuncDict[parameters]:
+                return True
+            return False
+
+        if lookIn(self.functions):
+            return True
+        if checkUserFunctions and lookIn(self.userFunctions):
+            return True
+        return False
 
     def mpfToStr(self, value):
         def toStr(realValue):
@@ -201,7 +228,6 @@ class MCalc:
         lg.ignore(r'[ \t]+')
         lg.add('HELP', r'help')
         lg.add('COMMAND', r"\.[_a-zA-Z][_a-zA-Z0-9']*")
-        # lg.add('FUNCTION', r"(%s)[ \t]*\(" % '|'.join(self._functionNames()))
         lg.add('NUMBER', r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
         lg.add('PLUS', r'\+')
         lg.add('MINUS', r'[-−]')
@@ -234,6 +260,13 @@ class MCalc:
             ('nonassoc', ('FACTORIAL',)),
             ('left', ('COMMA', 'RPAREN')),
         )
+
+        def maybe_name(t):
+            if t.name == 'NAME':
+                return Name(self, t.value)
+            else:
+                return t
+
         pg = rply.ParserGenerator(tokens, precedence)
 
         @pg.production('statementList : eos')
@@ -259,47 +292,15 @@ class MCalc:
             return p[0]
 
         @pg.production('statement : signedExpr')
+        @pg.production('statement : NAME')
         def statement_expr(p):
-            return ExprRoot(self, p[0]),
-
-        # @pg.production('statement : functionDef')
-        # def statement_functionDef(p):
-        #     return p[0]
-        #
-        # @pg.production('functionDef : NAME LPAREN RPAREN ASSIGN signedExpr')
-        # def functionDef_without_arguments(p):
-        #     return defineFunction(p[0][:-1].strip(), tuple(), p[3])
-        #
-        # @pg.production('functionDef : FUNCTION argumentList RPAREN ASSIGN signedExpr')
-        # def functionDef_with_arguments(p):
-        #     return defineFunction(p[0][:-1].strip(), p[1], p[4])
-
-        def defineFunction(name, arguments, expression):
-            result = []
-            if name in self.functions0 or name in self.functions1 or name in self.functions2:
-                result.append(RuntimeWarning('there is a built-in function of the same name "%s"' % (name,)))
-            if name in self.variables:
-                result.append(RuntimeWarning('there is a variable of the same name "%s"' % (name,)))
-            argSet = set()
-            for arg in arguments:
-                if arg in argSet:
-                    raise RuntimeError('argument "%s" appears more than once in argument list' % (arg,))
-                argSet.add(arg)
-            self.userFunctions['name'] = (arguments, expression)
-            return tuple()
-
-        # @pg.production('argumentList : signedExpr ')
-        # def argumentList_signedExpr(p):
-        #     return p[0],
-        #
-        # @pg.production('argumentList : signedExpr COMMA argumentList')
-        # def argumentList_signedExpr_argumentList(p):
-        #     return (p[0],) + p[2]
+            return ExprRoot(self, maybe_name(p[0])),
 
         @pg.production('signedExpr : expr')
         def signedExpr_expr(p):
             return p[0]
 
+        @pg.production('signedExpr : sign NAME')
         @pg.production('signedExpr : sign expr')
         def signedExpr_sign_expr(p):
             def createUnop(e, s):
@@ -307,7 +308,7 @@ class MCalc:
                     return UnOp(self, 4, e, lambda x: -x, '-')
                 else:
                     return UnOp(self, 4, e, lambda x: x, '+')
-            return functools.reduce(createUnop, p[0][::-1], p[1])
+            return functools.reduce(createUnop, p[0][::-1], maybe_name(p[1]))
 
         @pg.production('command : HELP')
         @pg.production('command : HELP NAME')
@@ -384,20 +385,59 @@ class MCalc:
                 raise ValueError('ambiguous setting prefix: %s' % p[0].value)
 
         @pg.production('assignment : NAME ASSIGN signedExpr')
-        def assignment(p):
+        def assignment_name(p):
             name = p[0].value
             self.variables[name] = p[2].eval()
-            if name in self._functionNames():
+            if self.existsFunction(name):
                 return RuntimeWarning('there is a function of the same name "%s"' % (name,)),
             return tuple()
+
+        @pg.production('assignment : function ASSIGN signedExpr')
+        @pg.production('assignment : function ASSIGN NAME')
+        def assignment_function_noParams(p):
+            if 0 not in self.userFunctions:
+                self.userFunctions[0] = dict()
+            name = p[0].name
+            self.userFunctions[0][name] = (tuple(), maybe_name(p[2]))
+            if name in self.variables:
+                return RuntimeWarning('there is a variable of the same name "%s"' % (name,))
+            if self.existsFunction(name, False, 0):
+                return RuntimeWarning('there is a built-in function of the same name "%s"' % (name,))
+            return tuple()
+
+        @pg.production('assignment : expr ASSIGN signedExpr')
+        @pg.production('assignment : expr ASSIGN NAME')
+        def assignment_function(p):
+            assert isinstance(p[0], BinOp)
+            assert isinstance(p[0].children[0], Name)
+            name = p[0].children[0].name
+            if isinstance(p[0].children[1], Name):
+                arguments = p[0].children[1].name,
+                if 1 not in self.userFunctions:
+                    self.userFunctions[1] = dict()
+                exprRoot = ExprRoot(self, maybe_name(p[2]))
+                exprRoot.fixup('functionCalls')
+                self.userFunctions[1][name] = (arguments, exprRoot)
+                return tuple()
+            elif isinstance(p[0].children[1], ArgListNode):
+                arguments = tuple([a.name for a in p[0].children[1].children])
+                if len(arguments) not in self.userFunctions:
+                    self.userFunctions[len(arguments)] = dict()
+                exprRoot = ExprRoot(self, maybe_name(p[2]))
+                exprRoot.fixup('functionCalls')
+                self.userFunctions[len(arguments)][name] = (arguments, exprRoot)
+                return tuple()
+            raise NotImplementedError  # TODO error message
 
         @pg.production('expr : NUMBER')
         def expr_number(p):
             return Number(self, p[0].value)
 
-        @pg.production('expr : NAME')
-        def expr_name(p):
-            return Name(self, p[0].value)
+        def maybe_name(t):
+            if isinstance(t, rply.Token) and t.name == 'NAME':
+                return Name(self, t.value)
+            else:
+                return t
 
         @pg.production('sign : PLUS')
         @pg.production('sign : MINUS')
@@ -410,68 +450,105 @@ class MCalc:
             return p[0] + p[1].value
 
         @pg.production('expr : expr PLUS expr')
+        @pg.production('expr : NAME PLUS expr')
+        @pg.production('expr : expr PLUS NAME')
+        @pg.production('expr : NAME PLUS NAME')
         def expr_addition(p):
-            return BinOp(self, 2, p[0], p[2], mp.fadd, '+')
+            return BinOp(self, 2, maybe_name(p[0]), maybe_name(p[2]), mp.fadd, '+')
 
         @pg.production('expr : expr PLUS sign expr')
+        @pg.production('expr : NAME PLUS sign expr')
+        @pg.production('expr : expr PLUS sign NAME')
+        @pg.production('expr : NAME PLUS sign NAME')
         def expr_addition_sign(p):
-            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fadd, '+')
+            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fadd, '+')
 
         @pg.production('expr : expr MINUS expr')
+        @pg.production('expr : NAME MINUS expr')
+        @pg.production('expr : expr MINUS NAME')
+        @pg.production('expr : NAME MINUS NAME')
         def expr_subtraction(p):
-            return BinOp(self, 2, p[0], p[2], mp.fsub, '-')
+            return BinOp(self, 2, maybe_name(p[0]), maybe_name(p[2]), mp.fsub, '-')
 
         @pg.production('expr : expr MINUS sign expr')
+        @pg.production('expr : NAME MINUS sign expr')
+        @pg.production('expr : expr MINUS sign NAME')
+        @pg.production('expr : NAME MINUS sign NAME')
         def expr_subtraction_sign(p):
-            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fsub, '-')
+            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fsub, '-')
 
         @pg.production('expr : expr MULTIPLY expr')
+        @pg.production('expr : NAME MULTIPLY expr')
+        @pg.production('expr : expr MULTIPLY NAME')
+        @pg.production('expr : NAME MULTIPLY NAME')
         def expr_multiplication(p):
-            return BinOp(self, 3, p[0], p[2], mp.fmul, '*')
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fmul, '*')
 
         @pg.production('expr : expr MULTIPLY sign expr')
+        @pg.production('expr : NAME MULTIPLY sign expr')
+        @pg.production('expr : expr MULTIPLY sign NAME')
+        @pg.production('expr : NAME MULTIPLY sign NAME')
         def expr_multiplication_sign(p):
-            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fmul, '*')
-
-        @pg.production('expr : NAME expr', precedence='MULTIPLY')
-        def expr_name_expr_implicit_multiplication(p):
-            return BinOp(self, 3, expr_name(p), p[1], mp.fmul, '*', implicit=True)
+            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fmul, '*')
 
         @pg.production('expr : expr expr', precedence='MULTIPLY')
+        @pg.production('expr : NAME expr', precedence='MULTIPLY')
+        @pg.production('expr : expr NAME', precedence='MULTIPLY')
+        @pg.production('expr : NAME NAME', precedence='MULTIPLY')
         def expr_implicit_multiplication(p):
-            return BinOp(self, 3, p[0], p[1], mp.fmul, '*', implicit=True)
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[1]), mp.fmul, '*', implicit=True)
 
         @pg.production('expr : expr DIVIDE expr')
+        @pg.production('expr : NAME DIVIDE expr')
+        @pg.production('expr : expr DIVIDE NAME')
+        @pg.production('expr : NAME DIVIDE NAME')
         def expr_division(p):
-            return BinOp(self, 3, p[0], p[2], mp.fdiv, '/')
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fdiv, '/')
 
         @pg.production('expr : expr DIVIDE sign expr')
+        @pg.production('expr : NAME DIVIDE sign expr')
+        @pg.production('expr : expr DIVIDE sign NAME')
+        @pg.production('expr : NAME DIVIDE sign NAME')
         def expr_division_sign(p):
-            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fdiv, '/')
+            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fdiv, '/')
 
         @pg.production('expr : expr MODULO expr')
+        @pg.production('expr : NAME MODULO expr')
+        @pg.production('expr : expr MODULO NAME')
+        @pg.production('expr : NAME MODULO NAME')
         def expr_modulo(p):
-            return BinOp(self, 3, p[0], p[2], mp.fmod, '%')
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fmod, '%')
 
         @pg.production('expr : expr MODULO sign expr')
+        @pg.production('expr : NAME MODULO sign expr')
+        @pg.production('expr : expr MODULO sign NAME')
+        @pg.production('expr : NAME MODULO sign NAME')
         def expr_modulo_sign(p):
-            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.fmod, '%')
+            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fmod, '%')
 
         @pg.production('expr : expr POWER expr')
+        @pg.production('expr : NAME POWER expr')
+        @pg.production('expr : expr POWER NAME')
+        @pg.production('expr : NAME POWER NAME')
         def expr_power(p):
-            return BinOp(self, 5, p[0], p[2], mp.power, '^', space=False)
+            return BinOp(self, 5, maybe_name(p[0]), maybe_name(p[2]), mp.power, '^', space=False)
 
         @pg.production('expr : expr POWER sign expr')
+        @pg.production('expr : NAME POWER sign expr')
+        @pg.production('expr : expr POWER sign NAME')
+        @pg.production('expr : NAME POWER sign NAME')
         def expr_power_sign(p):
-            return BinOp(self, 2, p[0], signedExpr_sign_expr(p[2:4]), mp.power, '^', space=False)
+            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.power, '^', space=False)
 
         @pg.production('expr : expr FACTORIAL')
+        @pg.production('expr : NAME FACTORIAL')
         def factexpr_factorial(p):
-            return UnOp(self, 6, p[0], mp.factorial, '!', 'postfix')
+            return UnOp(self, 6, maybe_name(p[0]), mp.factorial, '!', 'postfix')
 
+        @pg.production('expr : LPAREN NAME RPAREN')
         @pg.production('expr : LPAREN signedExpr RPAREN')
         def parenexpr_parens(p):
-            return p[1]
+            return maybe_name(p[1])
 
         @pg.production('expr : function')
         def expr_function(p):
@@ -479,30 +556,26 @@ class MCalc:
 
         @pg.production('function : NAME LPAREN RPAREN')
         def function(p):
-            return FunOp(self, p[0].value)
-
-        # Note: one-argument functions are parsed as multiplication and then
-        # later fixed in the AST.
-
-        # @pg.production('function : NAME LPAREN argumentList RPAREN')
-        # def function_argumentList(p):
-        #     return FunOp(self, p[0].value, *p[2])
+            return FunCall(self, p[0].value)
 
         @pg.production('expr : LPAREN argumentList RPAREN')
         def expr_argumentList(p):
             return ArgListNode(self, *p[1])
 
         @pg.production('argumentList : signedExpr argumentListContinuation')
+        @pg.production('argumentList : NAME argumentListContinuation')
         def argumentList_signedExpr(p):
-            return (p[0],) + p[1]
+            return (maybe_name(p[0]),) + p[1]
 
         @pg.production('argumentListContinuation : COMMA signedExpr')
+        @pg.production('argumentListContinuation : COMMA NAME')
         def argumentListContinuation_signedExpr(p):
-            return p[1],
+            return maybe_name(p[1]),
 
         @pg.production('argumentListContinuation : COMMA signedExpr argumentListContinuation')
+        @pg.production('argumentListContinuation : COMMA NAME argumentListContinuation')
         def argumentListContinuation_signedExpr_argumentListContinuation(p):
-            return (p[1],) + p[2]
+            return (maybe_name(p[1]),) + p[2]
 
         @pg.production('eos : ENTER')
         @pg.production('eos : SEMICOLON')
@@ -652,6 +725,8 @@ class Name(AbstractExpr):
         self.name = name
 
     def eval(self):
+        if self.name in self._mcalc.functionParameters[-1]:
+            return self._mcalc.functionParameters[-1][self.name]
         if self.name in self._mcalc.variables:
             return self._mcalc.variables[self.name]
         if self.name in self._mcalc.constants:
@@ -661,12 +736,12 @@ class Name(AbstractExpr):
     def __repr__(self):
         return self.name
 
-    def fixup(self, what):
+    def fixup(self, what=None):
         if what == 'functionCalls':
             pass
 
-            isFunction = (self.name in self._mcalc.functions1 and
-                          self.name not in self._mcalc.variables)
+            isFunction = (self.name not in self._mcalc.variables and
+                          self._mcalc.existsFunction(self.name, True, -1))
 
             if isFunction:
                 def isLeftSideOfImplicitMultiplication(node):
@@ -686,9 +761,9 @@ class Name(AbstractExpr):
                 multiplication = node.parent
                 argument = multiplication.children[1]
                 if isinstance(argument, ArgListNode):
-                    funNode = FunOp(self._mcalc, self.name, *argument.children)
+                    funNode = FunCall(self._mcalc, self.name, *argument.children)
                 else:
-                    funNode = FunOp(self._mcalc, self.name, argument)
+                    funNode = FunCall(self._mcalc, self.name, argument)
                 root = node.parent.parent
                 root.replaceChild(node.parent, node)
                 self.parent.replaceChild(self, funNode)
@@ -765,18 +840,28 @@ class BinOp(AbstractExpr):
             return '%s(%s, %s)' % (self.displayStr, repr(self.children[0]), repr(self.children[1]))
 
 
-class FunOp(AbstractExpr):
+class FunCall(AbstractExpr):
     def __init__(self, mcalc, name, *arguments):
         super().__init__(mcalc, 99, *arguments)
         self.name = name
 
     def eval(self):
-        if len(self.children) == 0 and self.name in self._mcalc.functions0:
-            return self._mcalc.functions0[self.name]()
-        elif len(self.children) == 1 and self.name in self._mcalc.functions1:
-            return self._mcalc.functions1[self.name](self.children[0].eval())
-        elif len(self.children) == 2 and self.name in self._mcalc.functions2:
-            return self._mcalc.functions2[self.name](self.children[0].eval(), self.children[1].eval())
+        paramCount = len(self.children)
+        parameters = [child.eval() for child in self.children]
+        m = self._mcalc
+
+        if paramCount in m.userFunctions and self.name in m.userFunctions[paramCount]:
+            paramNames, expr = m.userFunctions[paramCount][self.name]
+            assert len(paramNames) == len(self.children)
+            paramDict = dict()
+            for i, paramName in enumerate(paramNames):
+                paramDict[paramName] = parameters[i]
+            self._mcalc.functionParameters.append(paramDict)
+            result = expr.eval()
+            del self._mcalc.functionParameters[-1]
+            return result
+        if paramCount in m.functions and self.name in m.functions[paramCount]:
+            return m.functions[paramCount][self.name](*parameters)
         else:
             raise RuntimeError('unknown function: "%s"' % (self.name,))
 
@@ -831,6 +916,7 @@ def runTests():
     ok &= _testExpr('pi', '3.141592654', mcalc)
     mcalc.calc('angle:deg')
     ok &= _testExpr('sin(30)', '0.5', mcalc)
+    ok &= _testExpr('atan2(1, 1)', '45', mcalc)
     mcalc.calc('angle:rad')
     ok &= _testExpr('sin(pi/6)', '0.5', mcalc)
 
@@ -847,7 +933,14 @@ def runTests():
     ok &= _testExpr('(1+2)(3+4)', '21', mcalc)
 
     # Test user functions
-    ok &= _testExpr('f0()=1.2', mcalc)
+    ok &= _testExpr('.reset;f0()=1.2; f0()', '1.2', mcalc)
+    ok &= _testExpr('f1 x=1+x; f1(2)', '3', mcalc)
+    ok &= _testExpr('f1 2', '3', mcalc)
+    ok &= _testExpr('f1(f1(2))', '4', mcalc)
+    ok &= _testExpr('f1a(x)=10+x; f1a(2)', '12', mcalc)
+    ok &= _testExpr('f2(a, b)=sqrt(a^2+b^2); f2(3, 4)', '5', mcalc)
+    ok &= _testExpr('f3(a, b, c)=a+b+c; f3(1, 2, 3)', '6', mcalc)
+    ok &= _testExpr('id x = x; id 1', '1', mcalc)
 
     if ok:
         print('All tests passed')
