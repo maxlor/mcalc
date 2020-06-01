@@ -81,10 +81,15 @@ class MCalc:
                         results.append((True, self.mpfToStr(value)))
                     except ValueError as e:
                         results.append((False, 'Error: ' + str(e)))
+                elif isinstance(parsedObj, str):
+                    results.append((True, parsedObj))
                 elif isinstance(parsedObj, RuntimeWarning):
                     results.append((False, 'Warning: ' + str(parsedObj)))
+                elif isinstance(parsedObj, tuple) and len(parsedObj) == 0:
+                    pass
                 else:
-                    results.append((True, parsedObj))
+                    print("parsedObj (%s) = %s" % (type(parsedObj), parsedObj))
+                    assert False
             return results
 
         except rply.errors.LexingError as e:  # TODO restructure exception handling
@@ -106,6 +111,7 @@ class MCalc:
                     continue
 
                 for (isResult, result) in results:
+                    assert isinstance(result, str)
                     if isResult:
                         if os.isatty(0):
                             if '=' in result:
@@ -284,7 +290,7 @@ class MCalc:
 
         @pg.production('statement : command')
         def statement_command(p):
-            return p[0]
+            return p[0],
 
         @pg.production('statement : setting')
         @pg.production('statement : assignment')
@@ -321,6 +327,7 @@ class MCalc:
 
         @pg.production('command : COMMAND')
         @pg.production('command : COMMAND NAME')
+        @pg.production('command : COMMAND expr')
         def command_command(p):
             command = p[0].value
 
@@ -330,15 +337,37 @@ class MCalc:
                 return tuple()
 
             if command == '.del':
-                if len(p) == 2:
-                    name = p[1].value
-                    if name in self.variables:
-                        del self.variables[name]
-                        if name == 'last':
-                            self.variables['last'] = 0
-                    return tuple()
-                else:
+                if len(p) != 2:
                     return 'Error: .del requires an argument. Type "help .del" for more information',
+
+                if isinstance(p[1], rply.Token) and p[1].name == 'NAME':
+                    name = p[1].value
+                    if name not in self.variables:
+                        return RuntimeWarning('no such variable')
+
+                    del self.variables[name]
+                    if name == 'last':
+                        self.variables['last'] = 0
+                    return tuple()
+                elif isinstance(p[1], FunCall) or isinstance(p[1], AbstractExpr):
+                    expr = ExprRoot(self, p[1])
+                    expr.fixup('functionCalls')
+                    name = repr(expr)
+                    argCount = None
+
+                    if '()' in name:
+                        argCount = 0
+                    elif '(' in name:
+                        argCount = name.count(',') + 1
+                    if argCount is None:
+                        return RuntimeWarning('no such function')
+
+                    funName = name[:name.find('(')]
+                    if funName in self.userFunctions[argCount]:
+                        del self.userFunctions[argCount][funName]
+                        return tuple()
+
+                return RuntimeWarning('No such variable or function')
 
             if command == '.exit' or command == '.quit':
                 raise EOFError
@@ -350,12 +379,25 @@ class MCalc:
                 return tuple()
 
             if command == '.vars':
-                names = sorted(self.variables.keys())
-                if len(names) == 0:
-                    return tuple()
-                formatString = '%%%ds = %%s' % max(map(len, names))  # use largest name width
-                return '\n'.join(map(lambda name: formatString
-                                     % (name, self.mpfToStr(self.variables[name])), names)),
+                variables = ''
+                if len(self.variables) > 0:
+                    s = '%%%ds = %%s' % max(map(len, self.variables.keys()))  # use largest name width
+                    variables = '\n'.join([s % (name, self.mpfToStr(self.variables[name]))
+                                           for name in sorted(self.variables)])
+
+                functions = ''
+                funDict = dict()
+                for argCount in self.userFunctions:
+                    for name, funDef in self.userFunctions[argCount].items():
+                        fullname = '%s(%s)' % (name, ', '.join([x for x in funDef[0]]))
+                        funDict[fullname] = funDef[1]
+                if len(funDict) > 0:
+                    s = '%%%ds = %%s' % max(map(len, funDict.keys()))
+                    functions = '\n'.join([s % (name, funDict[name]) for name in sorted(funDict)])
+
+                if variables != '' and functions != '':
+                    return '%s\n\n%s' % (variables, functions)
+                return variables + functions
 
             raise ValueError('unknown comand: %s' % command)
 
@@ -829,7 +871,7 @@ class BinOp(AbstractExpr):
     def __repr__(self):
         space = ' ' if self.space else ''
         if self.displayType == 'infix':
-            return '[' + self.reprChild(0) + space + self.displayStr + space + self.reprChild(1) + ']'
+            return self.reprChild(0) + space + self.displayStr + space + self.reprChild(1)
         elif self.displayType == 'function':
             return '%s(%s, %s)' % (self.displayStr, repr(self.children[0]), repr(self.children[1]))
 
@@ -937,6 +979,10 @@ def runTests():
     ok &= _testExpr('id x = x; id 1', '1', mcalc)
     ok &= _testExpr('rand() = 0.5; rand()', '0.5', mcalc)
 
+    # Test .del
+    mcalc = MCalc()
+    ok &= _testExpr('f(x) = x; .del f(x); .vars', 'last = 0', mcalc)
+
     if ok:
         print('All tests passed')
 
@@ -978,7 +1024,7 @@ Examples:                           Available extended help commands:
 commands="""
 The following commands are available:
 
-    .del <variable>     Deletes a variable.
+    .del <var|fun>      Deletes a variable or function.
     
     .clear              Deletes all variables.
     
@@ -987,8 +1033,8 @@ The following commands are available:
     .reset              Deletes all variables and restores the default
                         settings.
     
-    .vars               Shows all currently known variables and their
-                        values.
+    .vars               Shows all variables and their values, and all
+                        user-defined functions and their definitions.
 """,
 constants="""
 The following constants are available. You can use them in mathematical
