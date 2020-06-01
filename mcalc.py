@@ -92,7 +92,7 @@ class MCalc:
                     assert False
             return results
 
-        except rply.errors.LexingError as e:  # TODO restructure exception handling
+        except rply.errors.LexingError as e:
             return [(False, self._errorMessage('unexpected character', line, e))]
         except rply.errors.ParsingError as e:
             return [(False, self._errorMessage('parser error', line, e))]
@@ -229,7 +229,8 @@ class MCalc:
                 line += s[i]
         return line, row, col
 
-    def _createLexer(self):
+    @staticmethod
+    def _createLexer():
         lg = rply.LexerGenerator()
         lg.ignore(r'[ \t]+')
         lg.add('HELP', r'help')
@@ -268,7 +269,7 @@ class MCalc:
         )
 
         def maybe_name(t):
-            if t.name == 'NAME':
+            if isinstance(t, rply.Token) and t.name == 'NAME':
                 return Name(self, t.value)
             else:
                 return t
@@ -290,7 +291,7 @@ class MCalc:
 
         @pg.production('statement : command')
         def statement_command(p):
-            return p[0],
+            return p[0]
 
         @pg.production('statement : setting')
         @pg.production('statement : assignment')
@@ -323,7 +324,7 @@ class MCalc:
             if subject in helpTexts:
                 return helpTexts[subject] + "\n",
             else:
-                return ('No help on "%s" available.' % subject),
+                return 'No help on "%s" available.' % subject,
 
         @pg.production('command : COMMAND')
         @pg.production('command : COMMAND NAME')
@@ -343,7 +344,7 @@ class MCalc:
                 if isinstance(p[1], rply.Token) and p[1].name == 'NAME':
                     name = p[1].value
                     if name not in self.variables:
-                        return RuntimeWarning('no such variable')
+                        return RuntimeWarning('no such variable'),
 
                     del self.variables[name]
                     if name == 'last':
@@ -360,7 +361,7 @@ class MCalc:
                     elif '(' in name:
                         argCount = name.count(',') + 1
                     if argCount is None:
-                        return RuntimeWarning('no such function')
+                        return RuntimeWarning('no such function'),
 
                     funName = name[:name.find('(')]
                     if funName in self.userFunctions[argCount]:
@@ -396,8 +397,8 @@ class MCalc:
                     functions = '\n'.join([s % (name, funDict[name]) for name in sorted(funDict)])
 
                 if variables != '' and functions != '':
-                    return '%s\n\n%s' % (variables, functions)
-                return variables + functions
+                    return '%s\n\n%s' % (variables, functions),
+                return variables + functions,
 
             raise ValueError('unknown comand: %s' % command)
 
@@ -450,36 +451,26 @@ class MCalc:
         @pg.production('assignment : expr ASSIGN signedExpr')
         @pg.production('assignment : expr ASSIGN NAME')
         def assignment_function(p):
-            assert isinstance(p[0], BinOp)
+            assert isinstance(p[0], BinOp) and p[0].fun == mp.fmul
             assert isinstance(p[0].children[0], Name)
             name = p[0].children[0].name
             if isinstance(p[0].children[1], Name):
                 arguments = p[0].children[1].name,
-                if 1 not in self.userFunctions:
-                    self.userFunctions[1] = dict()
-                exprRoot = ExprRoot(self, maybe_name(p[2]))
-                exprRoot.fixup('functionCalls')
-                self.userFunctions[1][name] = (arguments, exprRoot)
-                return tuple()
             elif isinstance(p[0].children[1], ArgListNode):
                 arguments = tuple([a.name for a in p[0].children[1].children])
-                if len(arguments) not in self.userFunctions:
-                    self.userFunctions[len(arguments)] = dict()
-                exprRoot = ExprRoot(self, maybe_name(p[2]))
-                exprRoot.fixup('functionCalls')
-                self.userFunctions[len(arguments)][name] = (arguments, exprRoot)
-                return tuple()
-            raise NotImplementedError  # TODO error message
+            else:
+                assert False
+
+            if len(arguments) not in self.userFunctions:
+                self.userFunctions[len(arguments)] = dict()
+            exprRoot = ExprRoot(self, maybe_name(p[2]))
+            exprRoot.fixup('functionCalls')
+            self.userFunctions[len(arguments)][name] = (arguments, exprRoot)
+            return tuple()
 
         @pg.production('expr : NUMBER')
         def expr_number(p):
             return Number(self, p[0].value)
-
-        def maybe_name(t):
-            if isinstance(t, rply.Token) and t.name == 'NAME':
-                return Name(self, t.value)
-            else:
-                return t
 
         @pg.production('sign : PLUS')
         @pg.production('sign : MINUS')
@@ -574,7 +565,8 @@ class MCalc:
         @pg.production('expr : expr POWER sign NAME')
         @pg.production('expr : NAME POWER sign NAME')
         def expr_power_sign(p):
-            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.power, '^', space=False)
+            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))),
+                         mp.power, '^', space=False)
 
         @pg.production('expr : expr FACTORIAL')
         @pg.production('expr : NAME FACTORIAL')
@@ -680,7 +672,7 @@ class Settings:
         return f
 
     @staticmethod
-    def rangeValidator(minValue, maxValue = None):
+    def rangeValidator(minValue, maxValue=None):
         def f(x):
             try:
                 int_x = int(x)
@@ -699,7 +691,7 @@ class Settings:
         return f
 
 
-class AbstractExpr():
+class AbstractExpr:
     def __init__(self, mcalc, precedence, *children):
         self._mcalc = mcalc
         self.precedence = precedence
@@ -978,6 +970,7 @@ def runTests():
     ok &= _testExpr('f3(a, b, c)=a+b+c; f3(1, 2, 3)', '6', mcalc)
     ok &= _testExpr('id x = x; id 1', '1', mcalc)
     ok &= _testExpr('rand() = 0.5; rand()', '0.5', mcalc)
+    ok &= _testExpr('pyth(a, b) = sqrt(a^2 + b^2); pyth(3, 4)', '5', mcalc)
 
     # Test .del
     mcalc = MCalc()
@@ -1005,7 +998,7 @@ def _testExpr(expr, expectedResult, mcalc=None):
 
 
 helpTexts = dict(
-main="""
+        main="""
 mcalc is an easy to use command line command line calculator with
 arbitrary precision. It works with valid mathematical expressions
 containing the operators +, -, *, /, %, ^ and ! as well as parentheses ().
@@ -1021,7 +1014,7 @@ Examples:                           Available extended help commands:
                     5292                help settings
                        2                help variables
 """,
-commands="""
+        commands="""
 The following commands are available:
 
     .del <var|fun>      Deletes a variable or function.
@@ -1036,7 +1029,7 @@ The following commands are available:
     .vars               Shows all variables and their values, and all
                         user-defined functions and their definitions.
 """,
-constants="""
+        constants="""
 The following constants are available. You can use them in mathematical
 expressions like you would a variable.
 
@@ -1055,7 +1048,7 @@ Note that it is possible to create variables with the same name as these
 constants. If you do so, the constants will not be accessible any more
 until you delete those variables using the .del command.
 """,
-functions="""
+        functions="""
 The following functions are available:
 
     Basic:              abs(x), log(x), log(x, b), ln(x), log2(x),
@@ -1072,7 +1065,7 @@ The following functions are available:
     
     Other:              rand()
 """,
-settings="""
+        settings="""
 To display a setting, type its name (including the :). To change a
 setting, follow that by the new value, e.g. "angle:rad". The following
 settings are available:
@@ -1089,18 +1082,22 @@ settings are available:
     precision:          Determines how many decimal digits are used during
                         calculation. Can be 3 or larger.
 """,
-variables="""
-To assign a value to variable, use the equals sign like so:
+        variables="""
+To assign a value to variable, use the equals sign. You can then use the
+variable in mathematical expressions. For example:
 
 > x = 42
-
-You can then use the variable in mathematical expressions, e.g.:
-
 > 3x^2
                     5292
+                    
+You may also define functions like so:
 
-Variable names may contain the letters from a-z in lower- or uppercase,
-digits (but not as first character) and the characters _ and '.
+> pythagoras(a, b) = sqrt(a^2 + b^2)
+> pythagoras(3, 4)
+                       5
+
+Variable and function names may contain the letters from a-z in lower- or
+uppercase, digits (except as first character) and the characters _ and '.
 To see the list of currently defined variables, use the .vars command.
 To delete variables, use the .del command.
 
