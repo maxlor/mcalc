@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 
-
+import argparse
+import appdirs
 import functools
 import mpmath as mp
 import os
 import readline
 import rply
 import sys
+
+
+_progName = 'mcalc'
+_version = '0.99'
+_rcFile = os.path.join(appdirs.user_config_dir(_progName, False), _progName + '.rc')
 
 
 def compose(f, g):
@@ -61,6 +67,7 @@ class MCalc:
                               '½': '(1/2)', '⅓': '(1/3)', '⅔': '(2/3)', '¼': '(1/4)',
                               '¾': '(3/4)', '⅕': '(1/5)', '⅖': '(2/5)', '⅗': '(3/5)',
                               '⅘': '(4/5)', '⅐': '(1/7)', '⅑': '(1/9)', '⅒': '(1/10)'}
+        self._inputFile = None
         self._lineCounter = -1
         self._lexer = self._createLexer()
         self._parser = self._createParser()
@@ -99,38 +106,58 @@ class MCalc:
         except ValueError as e:
             return [(False, 'Error: ' + str(e) + '\n')]
 
-    def run(self):
+    def run(self, skipRcFile):
+        def showResults(results):
+            for (isResult, result) in results:
+                assert isinstance(result, str)
+                if isResult:
+                    if os.isatty(0):
+                        if '=' in result:
+                            printIndented(result)
+                        elif ':' in result:
+                            printIndented(result)
+                        elif '.' in result:
+                            pos = result.find('.')
+                            printIndented('%20s%s' % (result[:pos], result[pos:]))
+                        else:
+                            printIndented('%20s' % result)
+                    else:
+                        print(result)
+                else:
+                    sys.stderr.write(result)
+                    sys.stderr.write('\n')
+                    sys.stderr.flush()
+
+        if not skipRcFile:
+            showResults(self.runRcFile())
+
         while True:
             try:
                 line = input('> ' if os.isatty(0) else '') + '\n'
                 self._lineCounter += 1
                 try:
-                    results = self.calc(line)
+                    showResults(self.calc(line))
                 except KeyboardInterrupt:
                     printIndented("%20s" % "interrupted")
-                    continue
 
-                for (isResult, result) in results:
-                    assert isinstance(result, str)
-                    if isResult:
-                        if os.isatty(0):
-                            if '=' in result:
-                                printIndented(result)
-                            elif ':' in result:
-                                printIndented(result)
-                            elif '.' in result:
-                                pos = result.find('.')
-                                printIndented('%20s%s' % (result[:pos], result[pos:]))
-                            else:
-                                printIndented('%20s' % result)
-                        else:
-                            print(result)
-                    else:
-                        sys.stderr.write(result)
-                        sys.stderr.write('\n')
-                        sys.stderr.flush()
             except EOFError:
                 break
+
+    def runRcFile(self):
+        result = []
+        if os.path.isfile(_rcFile):
+            with open(_rcFile) as f:
+                self._inputFile = _rcFile
+                try:
+                    for line in f.readlines():
+                        self._lineCounter += 1
+                        result += self.calc(line)
+                finally:
+                    self._inputFile = None
+                    self._lineCounter = -1
+        else:
+            print('skipping RC file')
+        return result
 
     def existsFunction(self, name, checkUserFunctions=True, parameters=None):
         """
@@ -202,7 +229,10 @@ class MCalc:
         try:
             line, row, col = MCalc._lineRowColFromIndex(line, e.source_pos.idx)
             errorMessage = ''
-            errorMessage += 'Error: %s at %d:%d\n' % (message, self._lineCounter + row, col)
+            if self._inputFile is not None:
+                errorMessage += 'Error: %s at %s:%d:%d\n' % (message, self._inputFile, self._lineCounter + row, col)
+            else:
+                errorMessage += 'Error: %s at %d:%d\n' % (message, self._lineCounter + row, col)
             errorMessage += '  "%s"\n' % line
             errorMessage += '  %s^\n' % ('—' * col)
         except AttributeError:
@@ -1115,10 +1145,18 @@ faster with gmpy or gmpy2 available.
 
 if __name__ == '__main__':
     try:
-        if '-t' in sys.argv:
+        parser = argparse.ArgumentParser(description='%(prog)s is a an arbitrary precision command line calculator. '
+                                         'Type "help" at the program\'s prompt for help on how to use it.', prog=_progName)
+        parser.add_argument('-n', action='store_true', help="Don't run the RC file on startup. "
+                            "The RC file is " + _rcFile)
+        parser.add_argument('-t', action='store_true', help='run tests (intended for development)')
+        parser.add_argument('-v', action='version', version='%(prog)s 0.99')
+        args = parser.parse_args()
+
+        if args.t:
             runTests()
         else:
             calculator = MCalc()
-            calculator.run()
+            calculator.run(args.n)
     except KeyboardInterrupt:
         sys.exit(-1)
