@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 
+# Copyright 2020 Benjamin Lutz
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License version 3 as published by the
+# Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program.  If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
+
 import argparse
 import appdirs
 import functools
 import mpmath as mp
 import os
-import readline
+import readline  # intentional, even if an IDE claims it's unused
 import rply
 import sys
 
@@ -19,23 +33,23 @@ def compose(f, g):
     return lambda *x: f(g(*x))
 
 
-def printIndented(*things):
+def _printIndented(*things):
     for thing in things:
         for line in str(thing).splitlines():
             print('    %s' % line)
 
 
-def findByPrefix(prefix, strings):
+def _findByPrefix(prefix, strings):
     return [s for s in strings if s.startswith(prefix)]
 
 
-def degrees(x):
+def _deg(x):
     if isinstance(x, mp.mpc):
         return mp.degrees(mp.re(x)) + mp.im(x) * mp.j
     return mp.degrees(x)
 
 
-def radians(x):
+def _rad(x):
     if isinstance(x, mp.mpc):
         return mp.radians(mp.re(x)) + mp.im(x) * mp.j
     return mp.radians(x)
@@ -59,11 +73,11 @@ class MCalc:
                     asinh=mp.asinh, acosh=mp.acosh, atanh=mp.atanh,
                     sinc=compose(mp.sinc, self._toAngle), gamma=mp.gamma, binom=mp.binomial,
                     ceil=mp.ceil, floor=mp.floor, round=mp.nint, frac=mp.frac, sign=mp.sign,
-                    re=mp.re, im=mp.im, conj=mp.conj, deg=degrees, rad=radians),
+                    re=mp.re, im=mp.im, conj=mp.conj, deg=_deg, rad=_rad),
             2: dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         }
         self.userFunctions = dict()
-        self.settings = Settings()
+        self.settings = _Settings()
         self.substitutions = {'¹': '^(1)', '²': '^(2)', '³': '^(3)', '⁴': '^(4)', '⁵': '^(5)',
                               '⁶': '^(6)', '⁷': '^(7)', '⁸': '^(8)', '⁹': '^(9)', 'ⁱ': '^(i)',
                               '½': '(1/2)', '⅓': '(1/3)', '⅔': '(2/3)', '¼': '(1/4)',
@@ -75,6 +89,26 @@ class MCalc:
         self._parser = self._createParser()
 
     def calc(self, line):
+        """
+        Run a line of text through the calculator. Line can actually contain
+        several lines, or several statements separated by semicolon.
+
+        The method returns a list of results and warnings as tuples of type
+        (bool, str), where the first boolean part is True if the second part
+        is a result, and False if it is a warning or error.
+
+        The ordering of the results will be the same as the ordering of
+        input statements; but if a statement doesn't produce a result or
+        warning, nothing will be added to the results list, so the number of
+        results may be less than the number of statements.
+
+        On error, processing of the line is aborted; if the line contains
+        several statements, statements following the error will not be
+        processed.
+
+        :param line: a string containing calculator input
+        :return:     a list of tuples with results, warnings and errors
+        """
         for key, value in self.substitutions.items():
             line = line.replace(key, value)
 
@@ -82,12 +116,12 @@ class MCalc:
             parsedObjects = self._parser.parse(self._lexer.lex(line))
             results = []
             for parsedObj in parsedObjects:
-                if isinstance(parsedObj, AbstractExpr):
+                if isinstance(parsedObj, _AbstractExpr):
                     parsedObj.fixup('functionCalls')
                     try:
                         value = parsedObj.eval()
                         self.variables['last'] = value
-                        results.append((True, self.mpfToStr(value)))
+                        results.append((True, self._mpfToStr(value)))
                     except ValueError as e:
                         results.append((False, 'Error: ' + str(e)))
                 elif isinstance(parsedObj, str):
@@ -109,20 +143,29 @@ class MCalc:
             return [(False, 'Error: ' + str(e) + '\n')]
 
     def run(self, skipRcFile):
+        """
+        Run the calculator. If a TTY is detected, it will show a prompt to the
+        user and allow command line editing features (courtesy of readline).
+
+        If no TTY is detected, it'll read from STDIN until EOF, process the
+        data and then exit.
+
+        :param skipRcFile: whether to run the RC file at startup
+        """
         def showResults(results):
             for (isResult, result) in results:
                 assert isinstance(result, str)
                 if isResult:
                     if os.isatty(0):
                         if '=' in result:
-                            printIndented(result)
+                            _printIndented(result)
                         elif ':' in result:
-                            printIndented(result)
+                            _printIndented(result)
                         elif '.' in result:
                             pos = result.find('.')
-                            printIndented('%20s%s' % (result[:pos], result[pos:]))
+                            _printIndented('%20s%s' % (result[:pos], result[pos:]))
                         else:
-                            printIndented('%20s' % result)
+                            _printIndented('%20s' % result)
                     else:
                         print(result)
                 else:
@@ -131,7 +174,7 @@ class MCalc:
                     sys.stderr.flush()
 
         if not skipRcFile:
-            showResults(self.runRcFile())
+            showResults(self._runRcFile())
 
         while True:
             try:
@@ -140,12 +183,13 @@ class MCalc:
                 try:
                     showResults(self.calc(line))
                 except KeyboardInterrupt:
-                    printIndented("%20s" % "interrupted")
+                    _printIndented("%20s" % "interrupted")
 
             except EOFError:
                 break
 
-    def runRcFile(self):
+    def _runRcFile(self):
+        """Run the RC file."""
         result = []
         if os.path.isfile(_rcFile):
             with open(_rcFile) as f:
@@ -161,29 +205,32 @@ class MCalc:
             print('skipping RC file')
         return result
 
-    def existsFunction(self, name, checkUserFunctions=True, parameters=None):
+    def _haveFunction(self, name, checkUserFunctions=True, paramCount=None):
         """
         Check whether the function called "name" exists.
-
-        If "checkUserFunctions" is True, user functions are checked for a match too.
 
         If "parameters" is 0 or larger, the function must have exiactly that many
         parameters to match, otherwise any number of parameters will do. If it is
         negative, it the function must have abs(parameters) or more to match. If
         "parameters" is None, any number of parameters will do.
+
+        :param name:              the function name to search for
+        :param checkUserFunction: whether to check user functions for a match too
+        :param paramCount:        the number of parameters
+        :return:                  True if a function is found, False otherwise
         """
         def lookIn(paramsFuncDict):
-            if parameters is None:
+            if paramCount is None:
                 for funcDict in paramsFuncDict.values():
                     if name in funcDict:
                         return True
-            elif parameters < 0:
+            elif paramCount < 0:
                 for noParams, funDict in paramsFuncDict.items():
-                    if noParams < -parameters:
+                    if noParams < -paramCount:
                         continue
                     if name in funDict:
                         return True
-            elif parameters in paramsFuncDict and name in paramsFuncDict[parameters]:
+            elif paramCount in paramsFuncDict and name in paramsFuncDict[paramCount]:
                 return True
             return False
 
@@ -193,7 +240,14 @@ class MCalc:
             return True
         return False
 
-    def mpfToStr(self, value):
+    def _mpfToStr(self, value):
+        """
+        Render an mpmath mpf or mpc value as string, taking into account the
+        "digits" setting.
+
+        :param value: the number
+        :return:      a string representation of the number
+        """
         def toStr(realValue):
             result = mp.nstr(realValue, int(self.settings['digits']))
             return result[0:-2] if result.endswith('.0') else result
@@ -222,12 +276,15 @@ class MCalc:
             return toStr(value)
 
     def _toAngle(self, x):
-        return radians(x) if self.settings['angle'] == 'deg' else x
+        """Convert x from the current angle setting to radians."""
+        return _rad(x) if self.settings['angle'] == 'deg' else x
 
     def _fromAngle(self, x):
-        return degrees(x) if self.settings['angle'] == 'deg' else x
+        """Convert x from radians to the current angle setting."""
+        return _deg(x) if self.settings['angle'] == 'deg' else x
 
     def _errorMessage(self, message, line, e):
+        """Creates a nicely formatted error message."""
         try:
             line, row, col = MCalc._lineRowColFromIndex(line, e.source_pos.idx)
             errorMessage = ''
@@ -243,6 +300,7 @@ class MCalc:
 
     @staticmethod
     def _lineRowColFromIndex(s, index):
+        """Convert an index into line, row, column."""
         line = ''
         row = 1
         col = 1
@@ -263,6 +321,7 @@ class MCalc:
 
     @staticmethod
     def _createLexer():
+        """Create the lexer."""
         lg = rply.LexerGenerator()
         lg.ignore(r'[ \t]+')
         lg.add('HELP', r'help')
@@ -286,6 +345,7 @@ class MCalc:
         return lg.build()
 
     def _createParser(self):
+        """Create the parser."""
         tokens = ('HELP', 'COMMAND', 'NUMBER', 'PLUS', 'MINUS',
                   'MULTIPLY', 'DIVIDE', 'MODULO', 'POWER', 'FACTORIAL',
                   'SEMICOLON', 'ENTER', 'LPAREN', 'RPAREN', 'NAME',
@@ -353,8 +413,8 @@ class MCalc:
         @pg.production('command : HELP NAME')
         def command_help_name(p):
             subject = p[1].value if len(p) > 1 else 'main'
-            if subject in helpTexts:
-                return helpTexts[subject] + "\n",
+            if subject in _helpTexts:
+                return _helpTexts[subject] + "\n",
             else:
                 return 'No help on "%s" available.' % subject,
 
@@ -382,7 +442,7 @@ class MCalc:
                     if name == 'last':
                         self.variables['last'] = 0
                     return tuple()
-                elif isinstance(p[1], FunCall) or isinstance(p[1], AbstractExpr):
+                elif isinstance(p[1], FunCall) or isinstance(p[1], _AbstractExpr):
                     expr = ExprRoot(self, p[1])
                     expr.fixup('functionCalls')
                     name = repr(expr)
@@ -415,7 +475,7 @@ class MCalc:
                 variables = ''
                 if len(self.variables) > 0:
                     s = '%%%ds = %%s' % max(map(len, self.variables.keys()))  # use largest name width
-                    variables = '\n'.join([s % (name, self.mpfToStr(self.variables[name]))
+                    variables = '\n'.join([s % (name, self._mpfToStr(self.variables[name]))
                                            for name in sorted(self.variables)])
 
                 functions = ''
@@ -441,7 +501,7 @@ class MCalc:
 
         @pg.production('setting : NAME COLON')
         def setting_get(p):
-            names = findByPrefix(p[0].value, self.settings.keys())
+            names = _findByPrefix(p[0].value, self.settings.keys())
             if len(names) == 0:
                 raise ValueError('unknown setting: %s' % p[0].value)
             return map(lambda s: '%s: %s' % (s, self.settings[s]), names)
@@ -449,7 +509,7 @@ class MCalc:
         @pg.production('setting : NAME COLON NUMBER')
         @pg.production('setting : NAME COLON NAME')
         def setting_set(p):
-            names = findByPrefix(p[0].value, self.settings.keys())
+            names = _findByPrefix(p[0].value, self.settings.keys())
             value = p[2].value
             if len(names) == 1:
                 self.settings[names[0]] = value
@@ -463,7 +523,7 @@ class MCalc:
         def assignment_name(p):
             name = p[0].value
             self.variables[name] = p[2].eval()
-            if self.existsFunction(name):
+            if self._haveFunction(name):
                 return RuntimeWarning('there is a function of the same name "%s"' % (name,)),
             return tuple()
 
@@ -476,7 +536,7 @@ class MCalc:
             self.userFunctions[0][name] = (tuple(), maybe_name(p[2]))
             if name in self.variables:
                 return RuntimeWarning('there is a variable of the same name "%s"' % (name,)),
-            if self.existsFunction(name, False, 0):
+            if self._haveFunction(name, False, 0):
                 return RuntimeWarning('there is a built-in function of the same name "%s"' % (name,)),
             return tuple()
 
@@ -650,13 +710,14 @@ class MCalc:
         return p
 
 
-class Settings:
+class _Settings:
+    """Settings helper class used by MCalc. Includes setter validation."""
     def __init__(self):
         self._settings = dict()
         self.reset()
-        self._validators = dict(angle=Settings.setValidator('deg', 'rad'),
-                                precision=Settings.rangeValidator(3),
-                                digits=Settings.rangeValidator(1))
+        self._validators = dict(angle=_Settings.setValidator('deg', 'rad'),
+                                precision=_Settings.rangeValidator(3),
+                                digits=_Settings.rangeValidator(1))
         self._sideeffects = dict(digits=self.increasePrecision,
                                  precision=self.setMpmathPrecision)
 
@@ -723,9 +784,17 @@ class Settings:
         return f
 
 
-class AbstractExpr:
+class _AbstractExpr:
+    """ Abstract base class for expression tree nodes."""
     def __init__(self, mcalc, precedence, *children):
-        self._mcalc = mcalc
+        """
+        Initialize the node.
+
+        :param mcalc:      reference to an MCalc object
+        :param precedence: the precedence of this node; 99 is used if there is no precedence
+        :param children:   the child nodes
+        """
+        self.mcalc = mcalc
         self.precedence = precedence
         self.parent = None
         self.children = list(children)
@@ -736,9 +805,21 @@ class AbstractExpr:
         raise NotImplementedError
 
     def eval(self):
+        """Evaluate this note and return an mpf or mpc number."""
         raise NotImplementedError
 
     def fixup(self, what=None):
+        """
+        Fix up the syntax tree after parsing.
+
+        Only one value for what is currently implemented:
+
+        functionCalls
+          Turn multiplications into function calls where appropriate. After
+          parsing "sin 45", we have a multiplication of "sin" and "45", so
+          we detect where the name refers to a function instead of a variable
+          and replace the multiplication by a function call.
+        """
         def hasExprAncestor(node):
             while not isinstance(node, ExprRoot):
                 node = node.parent
@@ -746,12 +827,15 @@ class AbstractExpr:
                     return False
             return True
 
+        # Iterate through child nodes, but stop if this node has been deleted
+        # by the child. It's the child's responsibility to resume the fixup.
         for i in range(len(self.children)):
             self.children[i].fixup(what)
             if not hasExprAncestor(self):
                 return  # This node has been deleted in fixup
 
     def replaceChild(self, oldChild, newChild):
+        """Replace the child oldChild with newChild."""
         for i, c in enumerate(self.children):
             if c is oldChild:
                 oldChild.parent = None
@@ -761,6 +845,10 @@ class AbstractExpr:
         raise ValueError('child not found')
 
     def reprChild(self, i):
+        """
+        Return a string representation of the i-th child, with parentheses
+        added if required by operator precedence rules.
+        """
         c = self.children[i]
         if c.precedence < self.precedence:
             return '(%s)' % repr(c)
@@ -768,7 +856,8 @@ class AbstractExpr:
             return repr(c)
 
 
-class ExprRoot(AbstractExpr):
+class ExprRoot(_AbstractExpr):
+    """A guard node that serves as the root of an expression tree."""
     def __init__(self, mcalc, expr):
         super().__init__(mcalc, 99, expr)
 
@@ -779,18 +868,19 @@ class ExprRoot(AbstractExpr):
         return self.children[0].eval()
 
 
-class Name(AbstractExpr):
+class Name(_AbstractExpr):
+    """A node that contains a name, typically referring to a variable or constant."""
     def __init__(self, mcalc, name):
         super().__init__(mcalc, 99)
         self.name = name
 
     def eval(self):
-        if self.name in self._mcalc.functionParameters[-1]:
-            return self._mcalc.functionParameters[-1][self.name]
-        if self.name in self._mcalc.variables:
-            return self._mcalc.variables[self.name]
-        if self.name in self._mcalc.constants:
-            return self._mcalc.constants[self.name]
+        if self.name in self.mcalc.functionParameters[-1]:
+            return self.mcalc.functionParameters[-1][self.name]
+        if self.name in self.mcalc.variables:
+            return self.mcalc.variables[self.name]
+        if self.name in self.mcalc.constants:
+            return self.mcalc.constants[self.name]
         raise ValueError('unknown constant or variable: ' + self.name)
 
     def __repr__(self):
@@ -800,8 +890,8 @@ class Name(AbstractExpr):
         if what == 'functionCalls':
             pass
 
-            isFunction = (self.name not in self._mcalc.variables and
-                          self._mcalc.existsFunction(self.name, True, -1))
+            isFunction = (self.name not in self.mcalc.variables and
+                          self.mcalc._haveFunction(self.name, True, -1))
 
             if isFunction:
                 def isLeftSideOfImplicitMultiplication(node):
@@ -821,16 +911,17 @@ class Name(AbstractExpr):
                 multiplication = node.parent
                 argument = multiplication.children[1]
                 if isinstance(argument, ArgListNode):
-                    funNode = FunCall(self._mcalc, self.name, *argument.children)
+                    funNode = FunCall(self.mcalc, self.name, *argument.children)
                 else:
-                    funNode = FunCall(self._mcalc, self.name, argument)
+                    funNode = FunCall(self.mcalc, self.name, argument)
                 root = node.parent.parent
                 root.replaceChild(node.parent, node)
                 self.parent.replaceChild(self, funNode)
                 funNode.fixup(what)
 
 
-class Number(AbstractExpr):
+class Number(_AbstractExpr):
+    """A node containing a number."""
     def __init__(self, mcalc, text):
         super().__init__(mcalc, 99)
         self._value = mp.mpf(text)
@@ -839,11 +930,23 @@ class Number(AbstractExpr):
         return self._value
 
     def __repr__(self):
-        return self._mcalc.mpfToStr(self._value)
+        return self.mcalc._mpfToStr(self._value)
 
 
-class UnOp(AbstractExpr):
+class UnOp(_AbstractExpr):
+    """A node containing an unary operator."""
     def __init__(self, mcalc, precedence, x, fun, displayStr, displayType='prefix', space=False):
+        """
+        Initialize the UnOp.
+
+        :param mcalc:       reference to an MCalc object
+        :param precedence:  the precedence of this node (int between 1 and 99)
+        :param x:           the operator argument, an expression
+        :param fun:         the function to apply to x when evaluating this node
+        :param displayStr:  a string representation of the operator
+        :param displayType: how to render this operator, "prefix" or "postfix"
+        :param space:       whether to but a space between the operator and x when rendering
+        """
         if isinstance(x, str):
             raise RuntimeError()
         super().__init__(mcalc, precedence, x)
@@ -866,9 +969,23 @@ class UnOp(AbstractExpr):
             raise ValueError('invalid display type')
 
 
-class BinOp(AbstractExpr):
+class BinOp(_AbstractExpr):
+    """A node containing an binary operator."""
     def __init__(self, mcalc, precedence, x, y, fun, displayStr, displayType='infix', space=True,
                  implicit=False):
+        """
+        Initialize the BinOp.
+
+        :param mcalc:       reference to an MCalc object
+        :param precedence:  the precedence of this node
+        :param x:           the first operator argument
+        :param y:           the second operator argument
+        :param fun:         the function to apply to x, y when evaluating this node
+        :param displayStr:  a string representation of the operator
+        :param displayType: how to render this operator, "infix" or "function"
+        :param space:       whether to but a space between the operator and x when rendering
+        :param implicit:    whether this operator is implicit
+        """
         super().__init__(mcalc, precedence, x, y)
         self.fun = fun
         self.displayStr = displayStr
@@ -887,7 +1004,8 @@ class BinOp(AbstractExpr):
             return '%s(%s, %s)' % (self.displayStr, repr(self.children[0]), repr(self.children[1]))
 
 
-class FunCall(AbstractExpr):
+class FunCall(_AbstractExpr):
+    """A node containing """
     def __init__(self, mcalc, name, *arguments):
         super().__init__(mcalc, 99, *arguments)
         self.name = name
@@ -895,7 +1013,7 @@ class FunCall(AbstractExpr):
     def eval(self):
         paramCount = len(self.children)
         parameters = [child.eval() for child in self.children]
-        m = self._mcalc
+        m = self.mcalc
 
         if paramCount in m.userFunctions and self.name in m.userFunctions[paramCount]:
             paramNames, expr = m.userFunctions[paramCount][self.name]
@@ -903,9 +1021,9 @@ class FunCall(AbstractExpr):
             paramDict = dict()
             for i, paramName in enumerate(paramNames):
                 paramDict[paramName] = parameters[i]
-            self._mcalc.functionParameters.append(paramDict)
+            self.mcalc.functionParameters.append(paramDict)
             result = expr.eval()
-            del self._mcalc.functionParameters[-1]
+            del self.mcalc.functionParameters[-1]
             return result
         if paramCount in m.functions and self.name in m.functions[paramCount]:
             return m.functions[paramCount][self.name](*parameters)
@@ -916,7 +1034,8 @@ class FunCall(AbstractExpr):
         return '%s(%s)' % (self.name, ', '.join([repr(child) for child in self.children]))
 
 
-class ArgListNode(AbstractExpr):
+class ArgListNode(_AbstractExpr):
+    """An argument list for a function call."""
     def __init__(self, mcalc, *arguments):
         super().__init__(mcalc, 99, *arguments)
 
@@ -928,6 +1047,7 @@ class ArgListNode(AbstractExpr):
 
 
 def runTests():
+    """Run unit tests."""
     mcalc = MCalc()
     ok = True
     # Test operator precedence
@@ -1016,7 +1136,7 @@ def _testExpr(expr, expectedResult, mcalc=None):
     return True
 
 
-helpTexts = dict(
+_helpTexts = dict(
         main="""
 mcalc is an easy to use command line command line calculator with
 arbitrary precision. It works with valid mathematical expressions
@@ -1125,7 +1245,7 @@ calculation.
 
 
 if mp.libmp.BACKEND != 'gmpy':
-    helpTexts['main'] += """
+    _helpTexts['main'] += """
 Note: no gmpy module is available. mcalc still works, but it will run much
 faster with gmpy or gmpy2 available.
 """
