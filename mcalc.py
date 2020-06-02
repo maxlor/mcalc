@@ -55,9 +55,11 @@ class MCalc:
                     asin=compose(self._fromAngle, mp.asin),
                     acos=compose(self._fromAngle, mp.acos),
                     atan=compose(self._fromAngle, mp.atan),
-                    sinc=compose(mp.sinc, self._toAngle),
+                    sinh=mp.sinh, cosh=mp.cosh, tanh=mp.tanh,
+                    asinh=mp.asinh, acosh=mp.acosh, atanh=mp.atanh,
+                    sinc=compose(mp.sinc, self._toAngle), gamma=mp.gamma, binom=mp.binomial,
                     ceil=mp.ceil, floor=mp.floor, round=mp.nint, frac=mp.frac, sign=mp.sign,
-                    re=mp.re, im=mp.im, deg=degrees, rad=radians),
+                    re=mp.re, im=mp.im, conj=mp.conj, deg=degrees, rad=radians),
             2: dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         }
         self.userFunctions = dict()
@@ -1079,21 +1081,20 @@ constants. If you do so, the constants will not be accessible any more
 until you delete those variables using the .del command.
 """,
         functions="""
-The following functions are available:
+The following functions are builtin:
 
     Basic:              abs(x), log(x), log(x, b), ln(x), log2(x),
                         sqrt(x), cbrt(x)
 
-    Trigonometric:      sin(a), cos(a), tan(a), asin(r), acos(r), atan(r),
-                        atan2(y, x), sinc(a)
+    Trigonometric and   sin(a), cos(a), tan(a), asin(r), acos(r), atan(r),
+    hyperbolic:         atan2(y, x), sinc(a), sinh(x), cosh(x), tanh(x),
+                        asinh(x), acosh(x), atanh(x)
     
-    Rounding:           ceil(x), floor(x), round(x)
+    Rounding:           ceil(x), floor(x), round(x), frac(x), sign(x)
     
-    Conversion:         deg(a), rad(a)
+    Complex numbers:    re(c), im(c), conj(c)
     
-    Part Extraction:    frac(x), sign(x), re(c), im(c)
-    
-    Other:              rand()
+    Other:              deg(a), rad(a), rand(), gamma(x), binom(n, k)
 """,
         settings="""
 To display a setting, type its name (including the :). To change a
