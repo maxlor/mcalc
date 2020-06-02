@@ -842,19 +842,6 @@ class Number(AbstractExpr):
         return self._mcalc.mpfToStr(self._value)
 
 
-class NoArgsFun(AbstractExpr):
-    def __init__(self, mcalc, fun, displayStr):
-        super().__init__(mcalc, 99)
-        self._fun = fun
-        self._displayStr = displayStr
-
-    def eval(self):
-        return self._fun()
-
-    def __repr__(self):
-        return self._displayStr + '()'
-
-
 class UnOp(AbstractExpr):
     def __init__(self, mcalc, precedence, x, fun, displayStr, displayType='prefix', space=False):
         if isinstance(x, str):
