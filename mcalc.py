@@ -713,13 +713,13 @@ class MCalc:
 class _Settings:
     """Settings helper class used by MCalc. Includes setter validation."""
     def __init__(self):
-        self._settings = dict()
-        self.reset()
+        self._settings = dict(angle='deg', digits=10, precision=mp.mp.dps)
         self._validators = dict(angle=_Settings.setValidator('deg', 'rad'),
                                 precision=_Settings.rangeValidator(3),
                                 digits=_Settings.rangeValidator(1))
         self._sideeffects = dict(digits=self.increasePrecision,
                                  precision=self.setMpmathPrecision)
+        self.reset()
 
     def __iter__(self):
         return iter(self._settings.keys())
@@ -739,9 +739,9 @@ class _Settings:
             self._sideeffects[key]()
 
     def reset(self):
-        self._settings['angle'] = 'deg'
-        self._settings['digits'] = 10
-        self._settings['precision'] = 12
+        self['angle'] = 'deg'
+        self['digits'] = 10
+        self['precision'] = 15
 
     def keys(self):
         return self._settings.keys()
