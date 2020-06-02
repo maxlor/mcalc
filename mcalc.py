@@ -8,11 +8,11 @@
 #
 # This program is distributed in the hope that it will be useful, but WITHOUT
 # ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+# FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 # details.
 #
 # You should have received a copy of the GNU General Public License along with
-# this program.  If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
+# this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
 import argparse
 import appdirs
@@ -25,7 +25,7 @@ import sys
 
 
 _progName = 'mcalc'
-_version = '0.99'
+_version = '1.0'
 _rcFile = os.path.join(appdirs.user_config_dir(_progName, False), _progName + '.rc')
 
 
@@ -1240,7 +1240,7 @@ To see the list of currently defined variables, use the .vars command.
 To delete variables, use the .del command.
 
 The variable "last" will automatically be assigned the result of the last
-calculation.        
+calculation.       
 """)
 
 
