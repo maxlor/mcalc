@@ -19,7 +19,10 @@ import appdirs
 import functools
 import mpmath as mp
 import os
-import readline  # intentional, even if an IDE claims it's unused
+try:
+    import readline  # intentional, even if an IDE claims it's unused
+except ImportError:  # may be unavailable on Windows
+    pass
 import rply
 import sys
 
@@ -201,8 +204,6 @@ class MCalc:
                 finally:
                     self._inputFile = None
                     self._lineCounter = -1
-        else:
-            print('skipping RC file')
         return result
 
     def _haveFunction(self, name, checkUserFunctions=True, paramCount=None):
@@ -214,10 +215,10 @@ class MCalc:
         negative, it the function must have abs(parameters) or more to match. If
         "parameters" is None, any number of parameters will do.
 
-        :param name:              the function name to search for
-        :param checkUserFunction: whether to check user functions for a match too
-        :param paramCount:        the number of parameters
-        :return:                  True if a function is found, False otherwise
+        :param name:               the function name to search for
+        :param checkUserFunctions: whether to check user functions for a match too
+        :param paramCount:         the number of parameters
+        :return:                   True if a function is found, False otherwise
         """
         def lookIn(paramsFuncDict):
             if paramCount is None:
