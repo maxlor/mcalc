@@ -28,7 +28,7 @@ import sys
 
 
 _progName = 'mcalc'
-_version = '1.0'
+_version = '1.0.1'
 _rcFile = os.path.join(appdirs.user_config_dir(_progName, False), _progName + '.rc')
 
 

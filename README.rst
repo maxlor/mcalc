@@ -96,6 +96,10 @@ enter at the mcalc prompt.
 
 Version History
 ---------------
+
+    1.0.1 (2020-06-03)
+        Make readline optional because it may be unavailable on Windows.
+
     1.0 (2020-06-02)
         Initial release.
 
