@@ -127,10 +127,14 @@ class MCalc:
                         results.append((True, self._mpfToStr(value)))
                     except ValueError as e:
                         results.append((False, 'Error: ' + str(e)))
+                    except ZeroDivisionError as e:
+                        results.append((False, 'Error: division by zero'))
                 elif isinstance(parsedObj, str):
                     results.append((True, parsedObj))
                 elif isinstance(parsedObj, RuntimeWarning):
                     results.append((False, 'Warning: ' + str(parsedObj)))
+                elif isinstance(parsedObj, RuntimeError):
+                    results.append((False, 'Error: ' + str(parsedObj)))
                 elif isinstance(parsedObj, tuple) and len(parsedObj) == 0:
                     pass
                 else:
@@ -523,7 +527,13 @@ class MCalc:
         @pg.production('assignment : NAME ASSIGN signedExpr')
         def assignment_name(p):
             name = p[0].value
-            self.variables[name] = p[2].eval()
+            try:
+                self.variables[name] = p[2].eval()
+            except ValueError as e:
+                return RuntimeError(str(e)),
+            except ZeroDivisionError as e:
+                return RuntimeError('division by zero'),
+
             if self._haveFunction(name):
                 return RuntimeWarning('there is a function of the same name "%s"' % (name,)),
             return tuple()
@@ -1076,6 +1086,8 @@ def runTests():
     ok &= _testExpr('2²', '4', mcalc)
     ok &= _testExpr('2³', '8', mcalc)
     ok &= _testExpr('2³²', '512', mcalc)
+    ok &= _testExpr('1/0', 'Error: division by zero', mcalc, expectError=True)
+    ok &= _testExpr('a=1/0', 'Error: division by zero', mcalc, expectError=True)
 
     # Test settings
     mcalc.calc('precision:7')  # expect 5 displayed digits
@@ -1120,7 +1132,7 @@ def runTests():
         print('All tests passed')
 
 
-def _testExpr(expr, expectedResult, mcalc=None):
+def _testExpr(expr, expectedResult, mcalc=None, expectError=False):
     if mcalc is None:
         mcalc = MCalc()
     results = [x for x in mcalc.calc(expr) if not x[1].startswith('Warning:')]
@@ -1128,7 +1140,11 @@ def _testExpr(expr, expectedResult, mcalc=None):
         print('Test failure on "%s": expected one result, but got %d' % (expr, len(results)))
         return False
     isResult, result = results[0]
-    if not isResult:
+    if expectError:
+        if isResult:
+            print('Test failure on "%s": expected an error, but got result %s' % (expr, result))
+            return False
+    elif not isResult:
         print('Test failure on "%s": expected a result, but got %s' % (expr, result))
         return False
     if result != expectedResult:
