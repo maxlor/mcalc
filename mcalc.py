@@ -61,7 +61,7 @@ def _rad(x):
 class MCalc:
     def __init__(self):
         self.scopedVariableStack = []
-        self.constants = dict(pi=mp.pi, tau=mp.pi * 2, e=mp.e, i=mp.j, _c=299792458)
+        self.constants = dict(pi=mp.pi, π=mp.pi, tau=mp.pi * 2, τ=mp.pi * 2, e=mp.e, i=mp.j, _c=299792458)
         self.variables = dict(last=0)
         self.functionParameters = [dict()]  # stack of dictionaries with guard
         self.functions = {
@@ -1016,7 +1016,7 @@ class BinOp(_AbstractExpr):
 
 
 class FunCall(_AbstractExpr):
-    """A node containing """
+    """A node containing a function call."""
     def __init__(self, mcalc, name, *arguments):
         super().__init__(mcalc, 99, *arguments)
         self.name = name
@@ -1193,12 +1193,12 @@ expressions like you would a variable.
 
     e                   Euler's constant, ~2.718.
     
-    i                   Imaginary unit, with i^2 = -1.
+    i                   Imaginary unit, with i² = -1.
     
-    pi                  Pi is the ratio of a circle's circumference to its
+    pi, π               π is the ratio of a circle's circumference to its
                         diameter. ~3.142
     
-    tau                 2 * Pi. ~6.283
+    tau, τ              2π. ~6.283
 
 Note that it is possible to create variables with the same name as these
 constants. If you do so, the constants will not be accessible any more
