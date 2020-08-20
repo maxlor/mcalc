@@ -97,6 +97,11 @@ enter at the mcalc prompt.
 Version History
 ---------------
 
+    1.0.2 (2020-08-20)
+        Fix some bugs (wrong parsing of “-1-1”, division by 0 not handled)
+
+        Add “π” and “τ” as alternatives to “pi” and “tau”.
+
     1.0.1 (2020-06-03)
         Make readline optional because it may be unavailable on Windows.
 
