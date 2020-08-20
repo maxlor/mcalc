@@ -127,7 +127,7 @@ class MCalc:
                         results.append((True, self._mpfToStr(value)))
                     except ValueError as e:
                         results.append((False, 'Error: ' + str(e)))
-                    except ZeroDivisionError as e:
+                    except ZeroDivisionError:
                         results.append((False, 'Error: division by zero'))
                 elif isinstance(parsedObj, str):
                     results.append((True, parsedObj))
@@ -334,10 +334,10 @@ class MCalc:
         lg.add('NUMBER', r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
         lg.add('PLUS', r'\+')
         lg.add('MINUS', r'[-−]')
+        lg.add('POWER', r'(?:\^|\*\*)')
         lg.add('MULTIPLY', r'[*⋅]')
         lg.add('DIVIDE', r'[/÷]')
         lg.add('MODULO', r'%')
-        lg.add('POWER', r'\^')
         lg.add('FACTORIAL', r'!')
         lg.add('SEMICOLON', r';')
         lg.add('ENTER', r'[\n\r]')
@@ -358,11 +358,12 @@ class MCalc:
         precedence = (
             ('left', ('SEMICOLON', 'ENTER')),
             ('right', ('ASSIGN',)),
+            ('left', ('COMMA', 'RPAREN')),
             ('left', ('PLUS', 'MINUS')),
             ('left', ('MULTIPLY', 'DIVIDE', 'MODULO', 'NUMBER', 'NAME', 'LPAREN')),
             ('right', ('POWER',)),
             ('nonassoc', ('FACTORIAL',)),
-            ('left', ('COMMA', 'RPAREN')),
+            ('right', ('SIGNSIGN',)),
         )
 
         def maybe_name(t):
@@ -370,6 +371,13 @@ class MCalc:
                 return Name(self, t.value)
             else:
                 return t
+
+        def signed(sign, x):
+            def identity(x):
+                return x
+
+            fun = mp.fneg if sign == '-' else identity
+            return UnOp(self, 4, x, fun, sign)
 
         pg = rply.ParserGenerator(tokens, precedence, cache_id='mcalc')
 
@@ -395,24 +403,9 @@ class MCalc:
         def statement_novalue(p):
             return p[0]
 
-        @pg.production('statement : signedExpr')
-        @pg.production('statement : NAME')
-        def statement_expr(p):
-            return ExprRoot(self, maybe_name(p[0])),
-
-        @pg.production('signedExpr : expr')
-        def signedExpr_expr(p):
-            return p[0]
-
-        @pg.production('signedExpr : sign NAME')
-        @pg.production('signedExpr : sign expr')
-        def signedExpr_sign_expr(p):
-            def createUnop(e, s):
-                if s == '-':
-                    return UnOp(self, 4, e, lambda x: -x, '-')
-                else:
-                    return UnOp(self, 4, e, lambda x: x, '+')
-            return functools.reduce(createUnop, p[0][::-1], maybe_name(p[1]))
+        @pg.production('statement : sum')
+        def statement_sum(p):
+            return ExprRoot(self, p[0]),
 
         @pg.production('command : HELP')
         @pg.production('command : HELP NAME')
@@ -424,8 +417,7 @@ class MCalc:
                 return 'No help on "%s" available.' % subject,
 
         @pg.production('command : COMMAND')
-        @pg.production('command : COMMAND NAME')
-        @pg.production('command : COMMAND expr')
+        @pg.production('command : COMMAND sum')
         def command_command(p):
             command = p[0].value
 
@@ -524,35 +516,33 @@ class MCalc:
             else:
                 raise ValueError('ambiguous setting prefix: %s' % p[0].value)
 
-        @pg.production('assignment : NAME ASSIGN signedExpr')
+        @pg.production('assignment : NAME ASSIGN sum')
         def assignment_name(p):
             name = p[0].value
             try:
                 self.variables[name] = p[2].eval()
             except ValueError as e:
                 return RuntimeError(str(e)),
-            except ZeroDivisionError as e:
+            except ZeroDivisionError:
                 return RuntimeError('division by zero'),
 
             if self._haveFunction(name):
                 return RuntimeWarning('there is a function of the same name "%s"' % (name,)),
             return tuple()
 
-        @pg.production('assignment : function ASSIGN signedExpr')
-        @pg.production('assignment : function ASSIGN NAME')
+        @pg.production('assignment : function ASSIGN sum')
         def assignment_function_noParams(p):
             if 0 not in self.userFunctions:
                 self.userFunctions[0] = dict()
             name = p[0].name
-            self.userFunctions[0][name] = (tuple(), maybe_name(p[2]))
+            self.userFunctions[0][name] = (tuple(), p[2])
             if name in self.variables:
                 return RuntimeWarning('there is a variable of the same name "%s"' % (name,)),
             if self._haveFunction(name, False, 0):
                 return RuntimeWarning('there is a built-in function of the same name "%s"' % (name,)),
             return tuple()
 
-        @pg.production('assignment : expr ASSIGN signedExpr')
-        @pg.production('assignment : expr ASSIGN NAME')
+        @pg.production('assignment : sum ASSIGN sum')
         def assignment_function(p):
             assert isinstance(p[0], BinOp) and p[0].fun == mp.fmul
             assert isinstance(p[0].children[0], Name)
@@ -566,146 +556,146 @@ class MCalc:
 
             if len(arguments) not in self.userFunctions:
                 self.userFunctions[len(arguments)] = dict()
-            exprRoot = ExprRoot(self, maybe_name(p[2]))
+            exprRoot = ExprRoot(self, p[2])
             exprRoot.fixup('functionCalls')
             self.userFunctions[len(arguments)][name] = (arguments, exprRoot)
             return tuple()
 
-        @pg.production('expr : NUMBER')
-        def expr_number(p):
+        @pg.production('sum : product')
+        @pg.production('sum : NAME')
+        def sum_product(p):
+            return maybe_name(p[0])
+
+        @pg.production('sum : sign product')
+        @pg.production('sum : sign NAME')
+        def sum_product(p):
+            return signed(p[0], maybe_name(p[1]))
+
+        @pg.production('sum : sum sign product')
+        @pg.production('sum : sum sign NAME')
+        @pg.production('sum : NAME sign product')
+        @pg.production('sum : NAME sign NAME')
+        def sum_sum_sign_product(p):
+            fun = mp.fsub if p[1] == '-' else mp.fadd
+            return BinOp(self, 2, maybe_name(p[0]), maybe_name(p[2]), fun, p[1])
+
+        @pg.production('product : operand')
+        def product_operand(p):
+            return p[0]
+
+        @pg.production('product : product MULTIPLY product')
+        @pg.production('product : product MULTIPLY NAME')
+        @pg.production('product : NAME MULTIPLY product')
+        @pg.production('product : NAME MULTIPLY NAME')
+        def product_product_multiply_product(p):
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fmul, '*')
+
+        @pg.production('product : product DIVIDE product')
+        @pg.production('product : product DIVIDE NAME')
+        @pg.production('product : NAME DIVIDE product')
+        @pg.production('product : NAME DIVIDE NAME')
+        def product_product_divide_product(p):
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fdiv, '/')
+
+        @pg.production('product : product MODULO product')
+        @pg.production('product : product MODULO NAME')
+        @pg.production('product : NAME MODULO product')
+        @pg.production('product : NAME MODULO NAME')
+        def product_product_modulo_product(p):
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[2]), mp.fmod, '%')
+
+        @pg.production('product : product MULTIPLY sign operand')
+        @pg.production('product : product MULTIPLY sign NAME')
+        @pg.production('product : NAME MULTIPLY sign operand')
+        @pg.production('product : NAME MULTIPLY sign NAME')
+        def product_product_multiply_sign_operand(p):
+            return BinOp(self, 3, maybe_name(p[0]), signed(p[1], maybe_name(p[2])), mp.fmul, '*')
+
+        @pg.production('product : product DIVIDE sign operand')
+        @pg.production('product : product DIVIDE sign NAME')
+        @pg.production('product : NAME DIVIDE sign operand')
+        @pg.production('product : NAME DIVIDE sign NAME')
+        def product_product_divide_sign_operand(p):
+            return BinOp(self, 3, maybe_name(p[0]), signed(p[1], maybe_name(p[2])), mp.fdiv, '/')
+
+        @pg.production('product : product MODULO sign operand')
+        @pg.production('product : product MODULO sign NAME')
+        @pg.production('product : NAME MODULO sign operand')
+        @pg.production('product : NAME MODULO sign NAME')
+        def modulo_sign_operand(p):
+            return BinOp(self, 3, maybe_name(p[0]), signed(p[1], maybe_name(p[2])), mp.fmod, '%')
+
+        @pg.production('product : product operand')
+        @pg.production('product : product NAME')
+        @pg.production('product : NAME operand')
+        @pg.production('product : NAME NAME')
+        def product_product_operand(p):
+            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[1]), mp.fmul, '*', implicit=True)
+
+        @pg.production('operand : operand POWER operand')
+        @pg.production('operand : operand POWER NAME')
+        @pg.production('operand : NAME POWER operand')
+        @pg.production('operand : NAME POWER NAME')
+        def operand_operand_power_operand(p):
+            return BinOp(self, 5, maybe_name(p[0]), maybe_name(p[2]),
+                         mp.power, '^', space=False)
+
+        @pg.production('operand : operand POWER sign operand')
+        @pg.production('operand : operand POWER sign NAME')
+        @pg.production('operand : NAME POWER sign operand')
+        @pg.production('operand : NAME POWER sign NAME')
+        def operand_operand_power_sign_operand(p):
+            return BinOp(self, 5, maybe_name(p[0]), signed(p[1], maybe_name(p[2])),
+                         mp.power, '^', space=False)
+
+        @pg.production('operand : operand FACTORIAL')
+        @pg.production('operand : NAME FACTORIAL')
+        def operand_operand_factorial(p):
+            return UnOp(self, 6, maybe_name(p[0]), mp.factorial, '!', 'postfix')
+
+        @pg.production('operand : NUMBER')
+        def operand_number(p):
             return Number(self, p[0].value)
+
+        @pg.production('operand : LPAREN sum RPAREN')
+        def operand_lparen_sum_rparen(p):
+            return p[1]
+
+        @pg.production('operand : function')
+        def operand_function(p):
+            return p[0]
 
         @pg.production('sign : PLUS')
         @pg.production('sign : MINUS')
-        def sign(p):
+        def sign_plus(p):
             return p[0].value
 
-        @pg.production('sign : sign PLUS')
-        @pg.production('sign : sign MINUS')
-        def signsign(p):
-            return p[0] + p[1].value
-
-        @pg.production('expr : expr PLUS expr')
-        @pg.production('expr : NAME PLUS expr')
-        @pg.production('expr : expr PLUS NAME')
-        @pg.production('expr : NAME PLUS NAME')
-        def expr_addition(p):
-            return BinOp(self, 2, maybe_name(p[0]), maybe_name(p[2]), mp.fadd, '+')
-
-        @pg.production('expr : expr PLUS sign expr')
-        @pg.production('expr : NAME PLUS sign expr')
-        @pg.production('expr : expr PLUS sign NAME')
-        @pg.production('expr : NAME PLUS sign NAME')
-        def expr_addition_sign(p):
-            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fadd, '+')
-
-        @pg.production('expr : expr MINUS expr')
-        @pg.production('expr : NAME MINUS expr')
-        @pg.production('expr : expr MINUS NAME')
-        @pg.production('expr : NAME MINUS NAME')
-        def expr_subtraction(p):
-            return BinOp(self, 2, maybe_name(p[0]), maybe_name(p[2]), mp.fsub, '-')
-
-        @pg.production('expr : expr MINUS sign expr')
-        @pg.production('expr : NAME MINUS sign expr')
-        @pg.production('expr : expr MINUS sign NAME')
-        @pg.production('expr : NAME MINUS sign NAME')
-        def expr_subtraction_sign(p):
-            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))), mp.fsub, '-')
-
-        @pg.production('mulDivModOp : MULTIPLY')
-        @pg.production('mulDivModOp : DIVIDE')
-        @pg.production('mulDivModOp : MODULO')
-        def mulDivModOp(p):
-            return p[0]
-
-        @pg.production('expr : expr mulDivModOp expr', precedence='MULTIPLY')
-        @pg.production('expr : NAME mulDivModOp expr', precedence='MULTIPLY')
-        @pg.production('expr : expr mulDivModOp NAME', precedence='MULTIPLY')
-        @pg.production('expr : NAME mulDivModOp NAME', precedence='MULTIPLY')
-        def expr_mulDivModOp(p):
-            first = maybe_name(p[0])
-            second = maybe_name(p[2])
-
-            if p[1].name == 'MULTIPLY':
-                return BinOp(self, 3, first, second, mp.fmul, '*')
-            if p[1].name == 'DIVIDE':
-                return BinOp(self, 3, first, second, mp.fdiv, '/')
-            if p[1].name == 'MODULO':
-                return BinOp(self, 3, first, second, mp.fmod, '%')
-
-        @pg.production('expr : expr mulDivModOp sign expr', precedence='MULTIPLY')
-        @pg.production('expr : NAME mulDivModOp sign expr', precedence='MULTIPLY')
-        @pg.production('expr : expr mulDivModOp sign NAME', precedence='MULTIPLY')
-        @pg.production('expr : NAME mulDivModOp sign NAME', precedence='MULTIPLY')
-        def expr_mulDivModOp_sign(p):
-            first = maybe_name(p[0])
-            second = signedExpr_sign_expr((p[2], maybe_name(p[3])))
-
-            if p[1].name == 'MULTIPLY':
-                return BinOp(self, 3, first, second, mp.fmul, '*')
-            if p[1].name == 'DIVIDE':
-                return BinOp(self, 3, first, second, mp.fdiv, '/')
-            if p[1].name == 'MODULO':
-                return BinOp(self, 3, first, second, mp.fmod, '%')
-
-        @pg.production('expr : expr expr', precedence='MULTIPLY')
-        @pg.production('expr : NAME expr', precedence='MULTIPLY')
-        @pg.production('expr : expr NAME', precedence='MULTIPLY')
-        @pg.production('expr : NAME NAME', precedence='MULTIPLY')
-        def expr_implicit_multiplication(p):
-            return BinOp(self, 3, maybe_name(p[0]), maybe_name(p[1]), mp.fmul, '*', implicit=True)
-
-        @pg.production('expr : expr POWER expr')
-        @pg.production('expr : NAME POWER expr')
-        @pg.production('expr : expr POWER NAME')
-        @pg.production('expr : NAME POWER NAME')
-        def expr_power(p):
-            return BinOp(self, 5, maybe_name(p[0]), maybe_name(p[2]), mp.power, '^', space=False)
-
-        @pg.production('expr : expr POWER sign expr')
-        @pg.production('expr : NAME POWER sign expr')
-        @pg.production('expr : expr POWER sign NAME')
-        @pg.production('expr : NAME POWER sign NAME')
-        def expr_power_sign(p):
-            return BinOp(self, 2, maybe_name(p[0]), signedExpr_sign_expr((p[2], maybe_name(p[3]))),
-                         mp.power, '^', space=False)
-
-        @pg.production('expr : expr FACTORIAL')
-        @pg.production('expr : NAME FACTORIAL')
-        def factexpr_factorial(p):
-            return UnOp(self, 6, maybe_name(p[0]), mp.factorial, '!', 'postfix')
-
-        @pg.production('expr : LPAREN NAME RPAREN')
-        @pg.production('expr : LPAREN signedExpr RPAREN')
-        def parenexpr_parens(p):
-            return maybe_name(p[1])
-
-        @pg.production('expr : function')
-        def expr_function(p):
-            return p[0]
+        @pg.production('sign : sign sign', precedence='SIGNSIGN')
+        def sign_sign_sign(p):
+            if p[0] == '+':
+                return p[1]
+            else:
+                return '+' if p[1] == '-' else '-'
 
         @pg.production('function : NAME LPAREN RPAREN')
         def function(p):
             return FunCall(self, p[0].value)
 
-        @pg.production('expr : LPAREN argumentList RPAREN')
-        def expr_argumentList(p):
+        @pg.production('operand : LPAREN argumentList RPAREN')
+        def operand_argumentList(p):
             return ArgListNode(self, *p[1])
 
-        @pg.production('argumentList : signedExpr argumentListContinuation')
+        @pg.production('argumentList : sum argumentListContinuation')
         @pg.production('argumentList : NAME argumentListContinuation')
-        def argumentList_signedExpr(p):
+        def argumentList_sum(p):
             return (maybe_name(p[0]),) + p[1]
 
-        @pg.production('argumentListContinuation : COMMA signedExpr')
-        @pg.production('argumentListContinuation : COMMA NAME')
-        def argumentListContinuation_signedExpr(p):
+        @pg.production('argumentListContinuation : COMMA sum')
+        def argumentListContinuation_sum(p):
             return maybe_name(p[1]),
 
-        @pg.production('argumentListContinuation : COMMA signedExpr argumentListContinuation')
-        @pg.production('argumentListContinuation : COMMA NAME argumentListContinuation')
-        def argumentListContinuation_signedExpr_argumentListContinuation(p):
+        @pg.production('argumentListContinuation : COMMA sum argumentListContinuation')
+        def argumentListContinuation_sum_argumentListContinuation(p):
             return (maybe_name(p[1]),) + p[2]
 
         @pg.production('eos : ENTER')
@@ -1061,11 +1051,35 @@ def runTests():
     """Run unit tests."""
     mcalc = MCalc()
     ok = True
+    ok &= _testExpr('1', '1', mcalc)
+    ok &= _testExpr('-1', '-1', mcalc)
+    ok &= _testExpr('--1', '1', mcalc)
+
+    # Test operators
+    ok &= _testExpr('1+2', '3', mcalc)
+    ok &= _testExpr('1+-2', '-1', mcalc)
+    ok &= _testExpr('-1+2', '1', mcalc)
+    ok &= _testExpr('-1+-2', '-3', mcalc)
+    ok &= _testExpr('1-2', '-1', mcalc)
+    ok &= _testExpr('2*3', '6', mcalc)
+    ok &= _testExpr('2⋅3', '6', mcalc)
+    ok &= _testExpr('2 3', '6', mcalc)
+    ok &= _testExpr('6/5', '1.2', mcalc)
+    ok &= _testExpr('6÷5', '1.2', mcalc)
+    ok &= _testExpr('7%5', '2', mcalc)
+    ok &= _testExpr('2^9', '512', mcalc)
+    ok &= _testExpr('2**9', '512', mcalc)
+    ok &= _testExpr('6!', '720', mcalc)
+
     # Test operator precedence
+    ok &= _testExpr('-2 3', '-6', mcalc)
     ok &= _testExpr('1+2*3+4', '11', mcalc)
+    ok &= _testExpr('1+2 3+4', '11', mcalc)
+    ok &= _testExpr('2 3+4 5', '26', mcalc)
     ok &= _testExpr('(1+2)*(3+4)', '21', mcalc)
     ok &= _testExpr('4-1', '3', mcalc)
     ok &= _testExpr('2*3^4*5', '810', mcalc)
+    ok &= _testExpr('2 3^4 5', '810', mcalc)
     ok &= _testExpr('2+3^4+5', '88', mcalc)
     ok &= _testExpr('-2^2', '-4', mcalc)
     ok &= _testExpr('-3!^3!', '-46656', mcalc)
@@ -1082,6 +1096,7 @@ def runTests():
     ok &= _testExpr('2 * 3 * sqrt 4', '12', mcalc)
     ok &= _testExpr('sqrt sqrt 16', '2', mcalc)
     ok &= _testExpr('sqrt^2(1+1)', '2', mcalc)
+    ok &= _testExpr('sqrt² 2', '2', mcalc)
     ok &= _testExpr('2¹', '2', mcalc)
     ok &= _testExpr('2²', '4', mcalc)
     ok &= _testExpr('2³', '8', mcalc)
@@ -1271,7 +1286,8 @@ faster with gmpy or gmpy2 available.
 if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser(description='%(prog)s is a an arbitrary precision command line calculator. '
-                                         'Type "help" at the program\'s prompt for help on how to use it.', prog=_progName)
+                                         'Type "help" at the program\'s prompt for help on how to use it.',
+                                         prog=_progName)
         parser.add_argument('-n', action='store_true', help="Don't run the RC file on startup. "
                             "The RC file is " + _rcFile)
         parser.add_argument('-t', action='store_true', help='run tests (intended for development)')
