@@ -1029,7 +1029,7 @@ class FunCall(_AbstractExpr):
         if paramCount in m.functions and self.name in m.functions[paramCount]:
             return m.functions[paramCount][self.name](*parameters)
         else:
-            raise RuntimeError('unknown function: "%s"' % (self.name,))
+            raise ValueError('unknown function: "%s"' % (self.name,))
 
     def __repr__(self):
         return '%s(%s)' % (self.name, ', '.join([repr(child) for child in self.children]))
