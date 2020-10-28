@@ -28,7 +28,7 @@ import sys
 
 
 _progName = 'mcalc'
-_version = '1.0.2'
+_version = '1.0.3'
 _rcFile = os.path.join(appdirs.user_config_dir(_progName, False), _progName + '.rc')
 
 
@@ -1283,7 +1283,7 @@ faster with gmpy or gmpy2 available.
 """
 
 
-if __name__ == '__main__':
+def main():
     try:
         parser = argparse.ArgumentParser(description='%(prog)s is a an arbitrary precision command line calculator. '
                                          'Type "help" at the program\'s prompt for help on how to use it.',
@@ -1301,3 +1301,7 @@ if __name__ == '__main__':
             calculator.run(args.n)
     except KeyboardInterrupt:
         sys.exit(-1)
+
+
+if __name__ == '__main__':
+    main()

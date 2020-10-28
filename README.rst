@@ -97,8 +97,13 @@ enter at the mcalc prompt.
 Version History
 ---------------
 
+    1.0.3 (2020-10-28)
+        Add a binary installer for Windows.
+
+        Fix crash when calling an undefined function.
+
     1.0.2 (2020-08-20)
-        Fix some bugs (wrong parsing of “-1-1”, division by 0 not handled)
+        Fix some bugs (wrong parsing of “-1-1”, division by 0 not handled).
 
         Add “π” and “τ” as alternatives to “pi” and “tau”.
 
