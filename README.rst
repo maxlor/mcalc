@@ -64,6 +64,11 @@ For **more information** on usage, type ``help`` at the mcalc prompt.
 Installation
 ------------
 
+For Windows users that don't have Python installed, I recommend using the
+mcalc installer exe. It bundles mcalc, Python and the required modules.
+
+If you already have Python, use the following steps:
+
 **Step 1:** Download and save ``mcalc.py`` to wherever is convenient for you.
 On unix, ``~/bin`` or ``/usr/local/bin`` might be suitable. Also on unix, you
 might need to set the executable bit::
