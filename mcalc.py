@@ -522,8 +522,10 @@ class MCalc:
         @pg.production('assignment : NAME ASSIGN sum')
         def assignment_name(p):
             name = p[0].value
+            root = ExprRoot(self, p[2])
+            root.fixup('functionCalls')
             try:
-                self.variables[name] = p[2].eval()
+                self.variables[name] = root.eval()
             except ValueError as e:
                 return RuntimeError(str(e)),
             except ZeroDivisionError:
@@ -1134,6 +1136,9 @@ def runTests():
     ok &= _testExpr('A=7;B=11;C=13; 2A B C', '2002', mcalc)
     ok &= _testExpr('2 5! 3', '720', mcalc)
     ok &= _testExpr('(1+2)(3+4)', '21', mcalc)
+
+    # Test variables
+    ok &= _testExpr('.reset;x = sqrt(4); x', '2', mcalc)
 
     # Test user functions
     ok &= _testExpr('.reset;f0()=1.2; f0()', '1.2', mcalc)
