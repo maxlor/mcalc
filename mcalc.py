@@ -25,6 +25,7 @@ except ImportError:  # may be unavailable on Windows
     pass
 import rply
 import sys
+import traceback
 
 
 _progName = 'mcalc'
@@ -191,6 +192,8 @@ class MCalc:
                     showResults(self.calc(line))
                 except KeyboardInterrupt:
                     _printIndented("%20s" % "interrupted")
+                except Exception as e:
+                    traceback.print_exc()
 
             except EOFError:
                 break
@@ -861,6 +864,7 @@ class ExprRoot(_AbstractExpr):
     """A guard node that serves as the root of an expression tree."""
     def __init__(self, mcalc, expr):
         super().__init__(mcalc, 99, expr)
+        assert isinstance(expr, _AbstractExpr)
 
     def __repr__(self):
         return repr(self.children[0])
@@ -873,6 +877,7 @@ class Name(_AbstractExpr):
     """A node that contains a name, typically referring to a variable or constant."""
     def __init__(self, mcalc, name):
         super().__init__(mcalc, 99)
+        assert isinstance(name, str)
         self.name = name
 
     def eval(self):
@@ -925,6 +930,7 @@ class Number(_AbstractExpr):
     """A node containing a number."""
     def __init__(self, mcalc, text):
         super().__init__(mcalc, 99)
+        assert isinstance(text, str)
         self._value = mp.mpf(text)
 
     def eval(self):
@@ -948,9 +954,8 @@ class UnOp(_AbstractExpr):
         :param displayType: how to render this operator, "prefix" or "postfix"
         :param space:       whether to but a space between the operator and x when rendering
         """
-        if isinstance(x, str):
-            raise RuntimeError()
         super().__init__(mcalc, precedence, x)
+        assert isinstance(x, _AbstractExpr)
         self._fun = fun
         self._displayStr = displayStr
         self._displayType = displayType
@@ -988,6 +993,8 @@ class BinOp(_AbstractExpr):
         :param implicit:    whether this operator is implicit
         """
         super().__init__(mcalc, precedence, x, y)
+        assert isinstance(x, _AbstractExpr)
+        assert isinstance(y, _AbstractExpr)
         self.fun = fun
         self.displayStr = displayStr
         self.displayType = displayType
@@ -1009,6 +1016,7 @@ class FunCall(_AbstractExpr):
     """A node containing a function call."""
     def __init__(self, mcalc, name, *arguments):
         super().__init__(mcalc, 99, *arguments)
+        assert isinstance(name, str)
         self.name = name
 
     def eval(self):
