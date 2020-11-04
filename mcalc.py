@@ -614,21 +614,21 @@ class MCalc:
         @pg.production('product : NAME MULTIPLY sign operand')
         @pg.production('product : NAME MULTIPLY sign NAME')
         def product_product_multiply_sign_operand(p):
-            return BinOp(self, 3, maybe_name(p[0]), signed(p[1], maybe_name(p[2])), mp.fmul, '*')
+            return BinOp(self, 3, maybe_name(p[0]), signed(p[2], maybe_name(p[3])), mp.fmul, '*')
 
         @pg.production('product : product DIVIDE sign operand')
         @pg.production('product : product DIVIDE sign NAME')
         @pg.production('product : NAME DIVIDE sign operand')
         @pg.production('product : NAME DIVIDE sign NAME')
         def product_product_divide_sign_operand(p):
-            return BinOp(self, 3, maybe_name(p[0]), signed(p[1], maybe_name(p[2])), mp.fdiv, '/')
+            return BinOp(self, 3, maybe_name(p[0]), signed(p[2], maybe_name(p[3])), mp.fdiv, '/')
 
         @pg.production('product : product MODULO sign operand')
         @pg.production('product : product MODULO sign NAME')
         @pg.production('product : NAME MODULO sign operand')
         @pg.production('product : NAME MODULO sign NAME')
         def modulo_sign_operand(p):
-            return BinOp(self, 3, maybe_name(p[0]), signed(p[1], maybe_name(p[2])), mp.fmod, '%')
+            return BinOp(self, 3, maybe_name(p[0]), signed(p[2], maybe_name(p[3])), mp.fmod, '%')
 
         @pg.production('product : product operand')
         @pg.production('product : product NAME')
@@ -650,7 +650,7 @@ class MCalc:
         @pg.production('operand : NAME POWER sign operand')
         @pg.production('operand : NAME POWER sign NAME')
         def operand_operand_power_sign_operand(p):
-            return BinOp(self, 5, maybe_name(p[0]), signed(p[1], maybe_name(p[2])),
+            return BinOp(self, 5, maybe_name(p[0]), signed(p[2], maybe_name(p[3])),
                          mp.power, '^', space=False)
 
         @pg.production('operand : operand FACTORIAL')
@@ -1113,6 +1113,9 @@ def runTests():
     ok &= _testExpr('2³²', '512', mcalc)
     ok &= _testExpr('1/0', 'Error: division by zero', mcalc, expectError=True)
     ok &= _testExpr('a=1/0', 'Error: division by zero', mcalc, expectError=True)
+    ok &= _testExpr('2*-3', '-6', mcalc)
+    ok &= _testExpr('10/-2', '-5', mcalc)
+    ok &= _testExpr('2^-2', '0.25', mcalc)
 
     # Test settings
     mcalc.calc('precision:7')  # expect 5 displayed digits
