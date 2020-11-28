@@ -45,6 +45,28 @@ def _printIndented(*things):
             print('    %s' % line)
 
 
+def _showResults(results):
+    for (isResult, result) in results:
+        assert isinstance(result, str)
+        if isResult:
+            if os.isatty(0):
+                if '=' in result:
+                    _printIndented(result)
+                elif ':' in result:
+                    _printIndented(result)
+                elif '.' in result:
+                    pos = result.find('.')
+                    _printIndented('%20s%s' % (result[:pos], result[pos:]))
+                else:
+                    _printIndented('%20s' % result)
+            else:
+                print(result)
+        else:
+            sys.stderr.write(result)
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+
 def _findByPrefix(prefix, strings):
     return [s for s in strings if s.startswith(prefix)]
 
@@ -62,7 +84,8 @@ def _rad(x):
 
 
 class MCalc:
-    def __init__(self):
+    def __init__(self, useRcFile=True):
+        self._useRcFile = useRcFile
         self.scopedVariableStack = []
         self.constants = dict(pi=mp.pi, π=mp.pi, tau=mp.pi * 2, τ=mp.pi * 2, e=mp.e, i=mp.j, _c=299792458)
         self.variables = dict(last=0)
@@ -82,7 +105,7 @@ class MCalc:
                     re=mp.re, im=mp.im, conj=mp.conj, deg=_deg, rad=_rad),
             2: dict(log=mp.log, atan2=compose(self._fromAngle, mp.atan2))
         }
-        self.userFunctions = {0: dict(), 1: dict()}
+        self.userFunctions = {}
         self.settings = _Settings()
         self.substitutions = {'¹': '^(1)', '²': '^(2)', '³': '^(3)', '⁴': '^(4)', '⁵': '^(5)',
                               '⁶': '^(6)', '⁷': '^(7)', '⁸': '^(8)', '⁹': '^(9)', 'ⁱ': '^(i)',
@@ -153,7 +176,7 @@ class MCalc:
         except ValueError as e:
             return [(False, 'Error: ' + str(e) + '\n')]
 
-    def run(self, skipRcFile):
+    def run(self):
         """
         Run the calculator. If a TTY is detected, it will show a prompt to the
         user and allow command line editing features (courtesy of readline).
@@ -163,36 +186,16 @@ class MCalc:
 
         :param skipRcFile: whether to run the RC file at startup
         """
-        def showResults(results):
-            for (isResult, result) in results:
-                assert isinstance(result, str)
-                if isResult:
-                    if os.isatty(0):
-                        if '=' in result:
-                            _printIndented(result)
-                        elif ':' in result:
-                            _printIndented(result)
-                        elif '.' in result:
-                            pos = result.find('.')
-                            _printIndented('%20s%s' % (result[:pos], result[pos:]))
-                        else:
-                            _printIndented('%20s' % result)
-                    else:
-                        print(result)
-                else:
-                    sys.stderr.write(result)
-                    sys.stderr.write('\n')
-                    sys.stderr.flush()
 
-        if not skipRcFile:
-            showResults(self._runRcFile())
+        if self._useRcFile:
+            _showResults(self._runRcFile())
 
         while True:
             try:
                 line = input('> ' if os.isatty(0) else '') + '\n'
                 self._lineCounter += 1
                 try:
-                    showResults(self.calc(line))
+                    _showResults(self.calc(line))
                 except KeyboardInterrupt:
                     _printIndented("%20s" % "interrupted")
                 except Exception as e:
@@ -475,7 +478,7 @@ class MCalc:
                         return RuntimeWarning('no such function'),
 
                     funName = name[:name.find('(')]
-                    if funName in self.userFunctions[argCount]:
+                    if argCount in self.userFunctions and funName in self.userFunctions[argCount]:
                         del self.userFunctions[argCount][funName]
                         return tuple()
 
@@ -487,6 +490,9 @@ class MCalc:
             if command == '.reset':
                 self.variables.clear()
                 self.variables['last'] = 0
+                self.userFunctions = {}
+                if self._useRcFile:
+                    _showResults(self._runRcFile())
                 self.settings.reset()
                 return tuple()
 
@@ -733,8 +739,14 @@ class MCalc:
             return BinOp(self, 5, funCall, signed(p[2], maybe_name(p[3])), mp.power, '^', space=False)
 
         @pg.production('function : FUNCTION operand')
+        @pg.production('function : FUNCTION NAME')
         def function_operand(p):
-            return FunCall(self, p[0].value, p[1])
+            return FunCall(self, p[0].value, maybe_name(p[1]))
+
+        @pg.production('function : FUNCTION sign operand')
+        @pg.production('function : FUNCTION sign NAME')
+        def function_sign_operand(p):
+            return FunCall(self, p[0].value, signed(p[1], maybe_name(p[2])))
 
         @pg.production('operand : FUNCTION POWER operand operand')
         @pg.production('operand : FUNCTION POWER NAME operand')
@@ -751,10 +763,6 @@ class MCalc:
         def function_power_operand_operand(p):
             funCall = FunCall(self, p[0].value, maybe_name(p[4]))
             return BinOp(self, 5, funCall, signed(p[2], maybe_name(p[3])), mp.power, '^', space=False)
-
-        @pg.production('function : FUNCTION sign operand')
-        def function_sign_operand(p):
-            return FunCall(self, p[0].value, signed(p[1], p[2]))
 
         @pg.production('operand : FUNCTION POWER operand sign operand')
         @pg.production('operand : FUNCTION POWER NAME sign operand')
@@ -1101,7 +1109,7 @@ class ArgListNode(_AbstractExpr):
 
 def runTests():
     """Run unit tests."""
-    mcalc = MCalc()
+    mcalc = MCalc(False)
 
     #return _testExpr('re(2+2i)!^2', 16, mcalc)
     ok = True
@@ -1168,6 +1176,10 @@ def runTests():
     ok &= _testExpr('10/-2', '-5', mcalc)
     ok &= _testExpr('2^-2', '0.25', mcalc)
     ok &= _testExpr('re(2+2i)²', '4', mcalc)
+
+    # Test variables
+    ok &= _testExpr('.reset; x = 30; .vars', 'last = 0\nx = 30', mcalc)
+    ok &= _testExpr('sin x', '0.5', mcalc)
 
     # parentheses-less function calls on negative operands
     ok &= _testExpr('sin + 90', '1', mcalc)
@@ -1236,8 +1248,9 @@ def _testExpr(expr, expectedResult, mcalc=None, expectError=False):
     elif not isResult:
         print('Test failure on "%s": expected a result, but got %s' % (expr, result))
         return False
-    if result != expectedResult:
-        print('Test failure on "%s": expected %s but got %s' % (expr, expectedResult, result))
+    strippedResult = '\n'.join([x.strip() for x in result.split('\n')])
+    if strippedResult != expectedResult:
+        print('Test failure on "%s": expected %s but got %s' % (expr, expectedResult, strippedResult))
         return False
     return True
 
@@ -1362,17 +1375,17 @@ def main():
         parser = argparse.ArgumentParser(description='%(prog)s is a an arbitrary precision command line calculator. '
                                          'Type "help" at the program\'s prompt for help on how to use it.',
                                          prog=_progName)
-        parser.add_argument('-n', action='store_true', help="Don't run the RC file on startup. "
+        parser.add_argument('-n', action='store_false', help="Don't run the RC file on startup. "
                             "The RC file is " + _rcFile)
         parser.add_argument('-t', action='store_true', help='run tests (intended for development)')
-        parser.add_argument('-v', action='version', version='%(prog)s 0.99')
+        parser.add_argument('-v', action='version', version='%%(prog)s %s' % _version)
         args = parser.parse_args()
 
         if args.t:
             runTests()
         else:
-            calculator = MCalc()
-            calculator.run(args.n)
+            calculator = MCalc(useRcFile=args.n)
+            calculator.run()
     except KeyboardInterrupt:
         sys.exit(-1)
 
