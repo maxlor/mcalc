@@ -101,6 +101,8 @@ enter at the mcalc prompt.
 
 Version History
 ---------------
+    1.1.0 (2020-12-26)
+	    Several fixes to expression parsing.
 
     1.0.3 (2020-10-28)
         Add a binary installer for Windows.

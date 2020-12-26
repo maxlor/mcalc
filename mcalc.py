@@ -30,7 +30,7 @@ import traceback
 
 
 _progName = 'mcalc'
-_version = '1.0.3'
+_version = '1.1.0'
 _rcFile = os.path.join(appdirs.user_config_dir(_progName, False), _progName + '.rc')
 
 
