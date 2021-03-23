@@ -459,10 +459,10 @@ class MCalc:
 
             if command == '.del':
                 if len(p) != 2:
-                    return 'Error: .del requires an argument. Type "help .del" for more information',
+                    return 'Error: .del requires an argument',
 
-                if isinstance(p[1], rply.Token) and p[1].name == 'NAME':
-                    name = p[1].value
+                if isinstance(p[1], Name):
+                    name = p[1].name
                     if name not in self.variables:
                         return RuntimeWarning('no such variable'),
 
@@ -1206,8 +1206,8 @@ def runTests():
     ok &= _testExpr('pyth(a, b) = sqrt(a^2 + b^2); pyth(3, 4)', '5', mcalc)
 
     # Test .del
-    mcalc = MCalc()
-    ok &= _testExpr('f(x) = x; .del f(x); .vars', 'last = 0', mcalc)
+    ok &= _testExpr('f(x) = x; .del f(x); .vars', 'last = 0')
+    ok &= _testExpr('a = 1; .del a; .vars', 'last = 0')
 
     if ok:
         print('All tests passed')
@@ -1336,8 +1336,8 @@ You may also define functions like so:
 
 Variable and function names may contain the letters from a-z in lower- or
 uppercase, digits (except as first character) and the characters _ and '.
-To see the list of currently defined variables, use the .vars command.
-To delete variables, use the .del command.
+To see the list of user-defined variables and functions, use the .vars
+command. To delete them, use the .del command.
 
 The variable "last" will automatically be assigned the result of the last
 calculation.       
