@@ -197,13 +197,9 @@ class MCalc:
             try:
                 line = input('> ' if os.isatty(0) else '') + '\n'
                 self._lineCounter += 1
-                try:
-                    _showResults(self.calc(line))
-                except KeyboardInterrupt:
-                    _printIndented("%20s" % "interrupted")
-                except Exception as e:
-                    traceback.print_exc()
-
+                _showResults(self.calc(line))
+            except KeyboardInterrupt:
+                _printIndented("%20s" % "interrupted")
             except EOFError:
                 break
 
